@@ -1,0 +1,11 @@
+## Artifacts
+*.DS_Store
+*pycache*
+*egg-info*
+*build/
+*dist/
+*.err
+*.out
+
+## Data
+data/raw
