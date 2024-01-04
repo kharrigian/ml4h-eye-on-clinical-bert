@@ -1,0 +1,14 @@
+numpy
+pandas
+scipy
+openpyxl
+scikit-learn
+matplotlib
+tqdm
+xlrd
+openpyxl
+tokenizers
+transformers
+torch
+pytorch-crf
+networkx

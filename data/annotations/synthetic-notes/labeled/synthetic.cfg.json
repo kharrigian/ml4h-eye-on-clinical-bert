@@ -1,0 +1,22 @@
+{
+  "input_file": "data/resources/synthetic-notes/synthetic.csv",
+  "output_dir": "data/annotations/synthetic-notes/unlabeled/",
+  "output_filename": "synthetic.xlsx",
+  "rm_existing": false,
+  "loader_handle_surgical": "merge",
+  "loader_handle_codes": "all",
+  "loader_handle_headers": "all",
+  "loader_handle_expand": "all",
+  "loader_handle_anti_vegf": true,
+  "loader_sample_rate": null,
+  "loader_random_state": 42,
+  "window_size": 10,
+  "sort_by_length": false,
+  "sort_by_examples": false,
+  "batch_size": 10,
+  "batch_inverse_lbl_weight": null,
+  "batch_uniform_lbl_weight": null,
+  "n_batches": 1,
+  "random_state": 42,
+  "n_jobs": 1
+}

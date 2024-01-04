@@ -1,0 +1,25 @@
+[[[ENCOUNTER ICD-10 CODES]]]
+[[E11.9: Type 2 diabetes mellitus without complications]]
+[[H35.81: Mild nonproliferative diabetic retinopathy, bilateral]]
+
+[[[PROGRESS NOTE]]]
+The patient with a known history of type 2 diabetes mellitus presented today for a routine eye examination. Reports stable blood glucose levels and compliance with prescribed medications. No recent changes in systemic health.
+
+Visual acuity measured at 20/30 in both eyes without correction. Dilated fundus examination revealed mild nonproliferative diabetic retinopathy (NPDR) characterized by microaneurysms and intraretinal hemorrhages. Macular edema was not detected.
+
+Patient counseled on the importance of glycemic control and regular eye examinations to monitor diabetic retinopathy progression. Scheduled for follow-up in six months.
+
+[[[PROBLEM LIST]]]
+[[E11.9: Type 2 diabetes mellitus without complications]]
+[OVERVIEW]
+The patient has type 2 diabetes mellitus without any current complications.
+
+[ASSESSMENT & PLAN]
+Stable glycemic control reported. Emphasized the importance of ongoing diabetes management, including medication adherence and lifestyle modifications.
+
+[[H35.81: Mild nonproliferative diabetic retinopathy, bilateral]]
+[OVERVIEW]
+Bilateral mild nonproliferative diabetic retinopathy was identified during the dilated fundus examination.
+
+[ASSESSMENT & PLAN]
+Clinical findings include microaneurysms and intraretinal hemorrhages. Discussed the significance of early detection and the need for regular follow-up examinations. Patient education provided on glycemic control and lifestyle measures to mitigate the progression of diabetic retinopathy. Scheduled for a follow-up eye examination in six months for continued monitoring
