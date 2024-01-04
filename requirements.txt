@@ -12,3 +12,4 @@ transformers
 torch
 pytorch-crf
 networkx
+datasets

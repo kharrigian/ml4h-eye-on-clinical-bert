@@ -298,7 +298,7 @@ def main():
                                                         input_annotations_src=input_annotations_src)
     ## Cache
     print("[Caching Formatting Annotations]")
-    with open(f"{args.output_dir}/annnotations.formatted.json","w") as the_file:
+    with open(f"{args.output_dir}/annotations.formatted.json","w") as the_file:
         for example in input_annotations:
             the_file.write(f"{json.dumps(example)}\n")
     ## Done

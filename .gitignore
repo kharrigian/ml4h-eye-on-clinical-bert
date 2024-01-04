@@ -10,3 +10,6 @@
 
 ## Data
 data/raw
+data/models/
+data/resources/synthetic-wnut_2017/raw/
+data/annotations/synthetic-wnut_2017/

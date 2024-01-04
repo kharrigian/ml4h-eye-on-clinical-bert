@@ -137,7 +137,7 @@ def parse_command_line():
     _ = parser.add_argument("--limit_spans_per_group", type=int, default=None, help="If include, restrict to maximally this many spans per group.")
     _ = parser.add_argument("--limit_spans_per_document_label_stratify", action="store_true", default=False, help="If include, count spans in a document by label instead of overall")
     _ = parser.add_argument("--limit_spans_per_group_label_stratify", action="store_true", default=False, help="If include, count spans in a group by label instead of overall")
-    _ = parser.add_argument("--limit_group", type=str, nargs="+", default=["patient_id"], help="Which metadata attributes to use as grouping variables.")
+    _ = parser.add_argument("--limit_group", type=str, nargs="+", default=None, help="Which metadata attributes to use as grouping variables.")
     _ = parser.add_argument("--model_init", type=str, default=None, help="If desired, can provide a cached model to use as the starting point of training.")
     _ = parser.add_argument("--model_init_ignore_fold", action="store_true", default=False, help="By default, we assume the model_init folds align with what is being trained.")
     _ = parser.add_argument("--model_init_reset_training", action="store_true", default=False, help="If including a model_init to initialize weights but you don't want to continue training.")
@@ -483,7 +483,7 @@ def _sample_splits_stratified(preprocessed_data,
     document_labels_oh["document_group"] = document_labels_oh.index.map(document_groups.get)
     group_labels_oh = document_labels_oh.groupby(["document_group"]).sum()
     group_labels_oh = (group_labels_oh > 0).astype(int)
-    group_labels_oh = group_labels_oh.sort_index(0).sort_index(1)
+    group_labels_oh = group_labels_oh.sort_index(axis=0).sort_index(axis=1)
     ## Isolate Groups Without any Labels
     groups_no_lbl = group_labels_oh.loc[group_labels_oh.sum(axis=1) == 0].index.tolist()
     group_labels_oh = group_labels_oh.loc[~group_labels_oh.index.isin(groups_no_lbl)].copy()

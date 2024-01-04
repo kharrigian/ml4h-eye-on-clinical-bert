@@ -403,7 +403,7 @@ def train(dataset,
                 ## Take a Step
                 if accum_take_step:
                     if grad_clip_norm is not None:
-                        _ = torch.nn.utils.clip_grad_norm(model.parameters(), grad_clip_norm)
+                        _ = torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip_norm)
                     ## Take step + reset gradients
                     print(">> Taking Step")
                     optimizer.step()

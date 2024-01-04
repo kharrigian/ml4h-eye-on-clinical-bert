@@ -142,6 +142,16 @@ CONCEPT_ATTRIBUTE_MAP = {
     },
     "G4 - Stroke":{
         "Status": ["No History of", "History of"]
+    },
+    "X1 - Emerging Entity":{
+        "Severity/Type":[
+            "Corporation",
+            "Creative-Work",
+            "Group",
+            "Location",
+            "Person",
+            "Product"
+        ]
     }
 }
 
@@ -151,7 +161,8 @@ CONCEPT_BINARY_STATUS = set([
     "G1 - Nephropathy",
     "G2 - Neuropathy",
     "G3 - Heart Attack",
-    "G4 - Stroke"
+    "G4 - Stroke",
+    "X1 - Emerging Entity"
 ])
 
 ##########################################
@@ -166,7 +177,7 @@ CLASSIFIER_TASK_MAP = {
             False:[False],
             True:[True]
         },
-        "concepts":["A1","A2","A3","A4","B1","C1","C2","C3","D1","D2","D3","D4","E1","E2","F1","G1","G2","G3","G4"]
+        "concepts":["A1","A2","A3","A4","B1","C1","C2","C3","D1","D2","D3","D4","E1","E2","F1","G1","G2","G3","G4","X1"]
     },
     "laterality":{
         "field":"laterality",
@@ -298,6 +309,19 @@ CLASSIFIER_TASK_MAP = {
             "Not Specified":["Not Specified"]
         },
         "concepts":["F1"]
+    },
+    "wnut":{
+        "field":"severity_type",
+        "classes":{
+            "Corporation":["Corporation"],
+            "Creative-Work":["Creative-Work"],
+            "Group":["Group"],
+            "Location":["Location"],
+            "Person":["Person"],
+            "Product":["Product"],
+            "Not Specified":["Not Specified"]
+        },
+        "concepts":["X1"]
     }
 }
 
