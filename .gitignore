@@ -9,7 +9,8 @@
 *.ipynb_checkpoints*
 
 ## Data
-data/raw
-data/models/
 data/resources/synthetic-wnut_2017/raw/
-data/annotations/synthetic-wnut_2017/
+data/models/
+!data/models/README.md
+data/annotations/
+!data/annotations/README.md
