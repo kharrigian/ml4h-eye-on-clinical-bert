@@ -2,7 +2,7 @@
 
 python -u scripts/annotation/prepare_worksheet.py \
     --input_file data/resources/synthetic-notes/synthetic.csv \
-    --output_dir data/annotations/synthetic-notes/unlabeled/ \
+    --output_dir data/annotations/synthetic-notes/ \
     --output_file synthetic.xlsx \
     --loader_handle_surgical merge \
     --loader_handle_codes all \

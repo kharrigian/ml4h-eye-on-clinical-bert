@@ -5,6 +5,7 @@
 
 ## Standard Libraries
 import os
+from glob import glob
 from datetime import datetime
 from collections import Counter
 
@@ -207,6 +208,9 @@ def _compute_training_loss(batch_inds,
     """
 
     """
+    ## Check
+    if model._encoder_entity is None and model._encoder_attributes is None:
+        raise ValueError("Cannot have a null entity encoder and attribute encoder.")
     ## Collation
     batch = collate_entity_attribute([dataset["train"][idx] for idx in batch_inds],
                                      use_first_index=use_first_index)
@@ -214,22 +218,21 @@ def _compute_training_loss(batch_inds,
     batch = move_batch_to_device(batch, training_device)
     ## Forward Pass
     entity_logits, attribute_logits = model(batch)
+    ## Initialize Loss
+    total_loss = 0
     ## Loss Computation
-    total_loss, loss_computed = 0, False
     if model._encoder_entity is not None:
         total_loss += compute_entity_loss(model=model,
                                           entity_weights=entity_weights,
                                           entity_logits=entity_logits,
                                           inputs=batch,
                                           reduce=True)
-        loss_computed = True
     if model._encoder_attributes is not None:
         total_loss += compute_attribute_loss(model=model,
                                              attribute_weights=attribute_weights,
                                              attribute_logits=attribute_logits,
                                              inputs=batch,
                                              reduce=True)
-        loss_computed = True
     ## Return
     return total_loss
 
@@ -254,7 +257,7 @@ def train(dataset,
           eval_strategy="steps",
           eval_train=False,
           eval_test=False,
-          save_frequency=1,
+          save_criteria=None,
           weighting_entity=None,
           weighting_attribute=None,
           use_first_index=False,
@@ -341,6 +344,10 @@ def train(dataset,
     accum_steps = 0
     cache_steps = 0
     last_update_reached = False
+    ## Best Model Information
+    best_checkpoint_dir = None
+    best_checkpoint_loss_new = False
+    best_checkpoint_f1_new = False
     ## Early Stopping Information
     best_dev_loss = None ## Best Loss Seen
     best_dev_loss_steps = 0 ## Number of Evaluations With Best Loss
@@ -472,14 +479,18 @@ def train(dataset,
                         if best_dev_loss is None or overall_dev_loss < best_dev_loss * (1 - early_stopping_tol):
                             best_dev_loss = overall_dev_loss
                             best_dev_loss_steps = 0
+                            best_checkpoint_loss_new = True
                         else:
-                            best_dev_loss_steps += 1                       
+                            best_dev_loss_steps += 1
+                            best_checkpoint_loss_new = False                  
                         ## Macro F1 Comparison
                         if best_dev_macro_f1 is None or overall_dev_macro_f1 > best_dev_macro_f1 * (1 + early_stopping_tol):
                             best_dev_macro_f1 = overall_dev_macro_f1
                             best_dev_macro_f1_steps = 0
+                            best_checkpoint_f1_new = True
                         else:
                             best_dev_macro_f1_steps += 1
+                            best_checkpoint_f1_new = False
                         ## Early Stopping Check
                         if (early_stopping_warmup is None or n_steps >= early_stopping_warmup):
                             if best_dev_loss_steps >= early_stopping_patience and best_dev_macro_f1_steps >= early_stopping_patience:
@@ -488,16 +499,20 @@ def train(dataset,
                                 early_stopping_triggered = "dev loss"
                             elif best_dev_macro_f1_steps >= early_stopping_patience:
                                 early_stopping_triggered = "dev f1"
-                ## Update Evals Count
-                cache_steps += 1
                 ## Model Checkpoint
-                if checkpoint_dir is not None and save_frequency > 0 and cache_steps == save_frequency:
-                    this_checkpoint_dir = f"{checkpoint_dir}/checkpoint-{n_steps}/"
-                    print(f">> Saving checkpoint: '{this_checkpoint_dir}'")
-                    _ = os.makedirs(this_checkpoint_dir)
-                    _ = torch.save(model.state_dict(), f"{this_checkpoint_dir}/model.pt")
-                    _ = torch.save(training_log, f"{this_checkpoint_dir}/train.log.pt")
-                    cache_steps = 0
+                if checkpoint_dir is not None and save_criteria is not None:
+                    ## Save
+                    if save_criteria == "all" or (save_criteria == "f1" and best_checkpoint_f1_new) or (save_criteria == "loss" and best_checkpoint_loss_new):
+                        ## Remove Old Best Checkpoint
+                        if save_criteria != "all" and best_checkpoint_dir is not None:
+                            print(f">> Removing previous best checkpoint: '{best_checkpoint_dir}")
+                            _ = os.system(f"rm -rf {best_checkpoint_dir}")
+                        ## Update Best Checkpoint
+                        best_checkpoint_dir = f"{checkpoint_dir}/checkpoint-{n_steps}/"
+                        print(f">> Saving new checkpoint: '{best_checkpoint_dir}'")
+                        _ = os.makedirs(best_checkpoint_dir)
+                        _ = torch.save(model.state_dict(), f"{best_checkpoint_dir}/model.pt")
+                        _ = torch.save(training_log, f"{best_checkpoint_dir}/train.log.pt")                    
             ## Scheduler Step
             if scheduler is not None and (lr_warmup is None or n_steps >= lr_warmup):
                 scheduler.step()

@@ -9,6 +9,7 @@ import json
 import numpy as np
 import pandas as pd
 from datasets import load_dataset
+from cce.util.helpers import apply_hash
 
 ## Load Dataset
 wnut = load_dataset("wnut_17",
@@ -96,13 +97,14 @@ for split in ["train","validation","test"]:
                 "in_header":False,
                 "in_autolabel_postprocess":False
             })
+        ## Updated Document ID
+        hashed_document_id = apply_hash("{}-{}".format(instance["id"], split))
         ## Cache
         formatted_instances.append({
-            "document_id":instance["id"],
+            "document_id":hashed_document_id,
             "text":text_str,
             "labels":text_spans_fmt,
             "metadata":{
-                "document_id":instance["id"],
                 "split":split,
                 "source":"wnut_2017",
                 "user_id":random_seed.randint(0, 150)

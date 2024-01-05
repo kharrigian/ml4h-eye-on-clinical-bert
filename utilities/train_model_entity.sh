@@ -14,10 +14,8 @@ python -u scripts/model/train.py \
         --max_sequence_length_input 128 \
         --max_sequence_length_model 512 \
         --sequence_split_type_input continuous \
-        --entity_key label \
-        --attribute_keys wnut \
         --include_entity \
-        --include_attributes \
+        --entity_key label \
         --exclude_autolabel \
         --exclude_non_specified \
         --eval_cv 5 \
@@ -31,7 +29,7 @@ python -u scripts/model/train.py \
         --limit_spans_per_group 25 \
         --limit_spans_per_group_label_stratify \
         --model_eval_batch_size 16 \
-        --model_save_frequency 0 \
+        --model_save_criteria "f1" \
         --model_lr_adaptive_method "step" \
         --model_lr_warmup 100 \
         --model_lr_step_size 50 \
@@ -44,14 +42,10 @@ python -u scripts/model/train.py \
         --model_n_steps 1000 \
         --model_eval_strategy "steps" \
         --model_eval_frequency 50 \
-        --attributes_hidden_size 256 \
         --model_train_batch_size 8 \
-        --model_train_gradient_accumulation 1 \
-        --weighting_attribute "balanced" \
-        --use_attribute_concept_bias \
+        --model_train_gradient_accumulation 8 \
         --early_stopping_tol 0.01 \
         --early_stopping_patience 5 \
         --early_stopping_warmup 50 \
-        --baseline_use_char \
         --random_state 42 \
         --gpu_id -1

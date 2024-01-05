@@ -159,7 +159,8 @@ def parse_command_line():
     _ = parser.add_argument("--model_eval_batch_size", type=int, default=16,help="Evaluation batch size (can be larger than training since no gradients)")
     _ = parser.add_argument("--model_eval_frequency", type=int, default=1, help="Number of update steps between evaluation subroutines")
     _ = parser.add_argument("--model_eval_strategy", type=str, default="epochs", choices={"epochs","steps"},help="Whether evaluation frequency is interpreted as steps or epochs")
-    _ = parser.add_argument("--model_save_frequency", type=int, default=1, help="Number of evaluations to run before saving model.")
+    _ = parser.add_argument("--model_save_criteria", type=str, default=None, choices={None,"loss","f1","all"}, help="Criteria for choosing model to save (if any)")
+    _ = parser.add_argument("--model_save_last", action="store_true", default=False, help="If included, will save model from final step regardless of whether it is the best.")
     _ = parser.add_argument("--early_stopping_tol", type=float, default=0.001, help="Relative loss decrease requirement.")
     _ = parser.add_argument("--early_stopping_patience", type=int, default=5, help="Number of evaluations before deeming the loss as stagnant/increasing.")
     _ = parser.add_argument("--early_stopping_warmup", type=int, default=None, help="If included, wait this many steps before checking early stopping criteria.")
@@ -189,7 +190,7 @@ def parse_command_line():
     _ = parser.add_argument("--eval_mc_split_frac", type=int, nargs=3, default=[7, 2, 1], help="If using monte carlo cross-validation (stratified or default), specify train, dev, test ratios.")
     _ = parser.add_argument("--eval_train", action="store_true", default=False, help="If included, run evaluation on training data.")
     _ = parser.add_argument("--eval_test", action="store_true", default=False,help="If included, run evaluation on test data")
-    _ = parser.add_argument("--eval_strategy", type=str, default="k_fold", choices={"k_fold","monte_carlo","stratified_k_fold","stratified_monte_carlo","redundant"})
+    _ = parser.add_argument("--eval_strategy", type=str, default="k_fold", choices={"k_fold","monte_carlo","stratified_k_fold","stratified_monte_carlo"})
     _ = parser.add_argument("--output_dir", type=str, default=None,help="Where to store outputs/models")
     _ = parser.add_argument("--rm_existing", action="store_true", default=False,help="If using an existing output directory, must include to overwrite.")
     _ = parser.add_argument("--keep_existing", action="store_true", default=False,help="If using an existing output directory, must include to keep data that already exists.")
@@ -311,76 +312,8 @@ def _load_annotations(annotation_file,
     ## Return
     return metadata, data
 
-def _sample_splits_redundant(preprocessed_data,
-                             **kwargs):
-    """
-    
-    """
-    document_ids = preprocessed_data["document_id"]
-    splits = {0:{
-        "train":set(document_ids),
-        "dev":set(document_ids),
-        "test":set(document_ids)
-        }
-    }
-    return splits
-
-def _sample_splits_monte_carlo(preprocessed_data,
-                               metadata=None,
-                               eval_cv=10,
-                               eval_cv_groups=None,
-                               split_frac=[7,2,1],
-                               random_state=42,
-                               verbose=True):
-    """
-
-    """
-    ## Format Split Frac
-    if not all(isinstance(i, int) for i in split_frac):
-        raise ValueError("Expected integer ratios for split_frac")
-    split_frac_sum = sum(split_frac)
-    split_frac = [x / split_frac_sum for x in split_frac]
-    ## Get Groups of Documents Which Should Be Kept Together
-    if eval_cv_groups is None:
-        document_groups = {x:i for i, x in enumerate(preprocessed_data["document_id"])}
-    else:
-        if any(g not in metadata.columns for g in eval_cv_groups):
-            raise KeyError("Not all parameters in eval_cv_groups found in metadata.")
-        metadata = metadata.loc[metadata["document_id"].isin(set(preprocessed_data["document_id"]))].copy()
-        document_groups = metadata.set_index("document_id")[eval_cv_groups].apply(tuple,axis=1).to_dict()
-    ## Reverse Document Groups
-    document_groups_r = {}
-    for x, y in document_groups.items():
-        if y not in document_groups_r:
-            document_groups_r[y] = set()
-        document_groups_r[y].add(x)
-    if verbose:
-        print("[Note: Found {:,d} Groups for {:,d} Documents]".format(len(document_groups_r), len(document_groups)))
-    groups = sorted(document_groups_r.keys())
-    ## Run Sampling
-    seed = np.random.RandomState(random_state)
-    splits = {}
-    for k in range(eval_cv):
-        ## Sample Assignments to Train/Dev/Test Set
-        fold_assignments = seed.choice(["train","dev","test"], len(groups), replace=True, p=split_frac)
-        ## Group Assignments
-        train_g = sorted([groups[ind] for ind in (fold_assignments == "train").nonzero()[0]])
-        dev_g = sorted([groups[ind] for ind in (fold_assignments == "dev").nonzero()[0]])
-        test_g = sorted([groups[ind] for ind in (fold_assignments == "test").nonzero()[0]])
-        ## Translate to Data Indices
-        train_doc = set.union(*[document_groups_r[g] for g in train_g])
-        dev_doc = set.union(*[document_groups_r[g] for g in dev_g])
-        test_doc = set.union(*[document_groups_r[g] for g in test_g])
-        ## Check Mutual Exclusion
-        assert len(train_doc & dev_doc) == 0
-        assert len(train_doc & test_doc) == 0
-        assert len(dev_doc & test_doc) == 0        
-        ## Store
-        splits[k] = {"train":train_doc, "dev":dev_doc, "test":test_doc}
-    ## Return
-    return splits
-
 def _sample_splits(preprocessed_data,
+                   data,
                    metadata=None,
                    eval_cv=5,
                    eval_cv_groups=None,
@@ -389,14 +322,17 @@ def _sample_splits(preprocessed_data,
     """
 
     """
-    ## Get Groups of Documents Which Should Be Kept Together
+    ## Accepted Document IDs Found in Dataset (Not Used for Splitting)
+    accept_doc_ids = set(preprocessed_data["document_id"])
+    ## Get Groups of Documents Which Should Be Kept Together (Splitting Criteria)
     if eval_cv_groups is None:
-        document_groups = {x:i for i, x in enumerate(preprocessed_data["document_id"])}
+        document_groups = {x["document_id"]:i for i, x in enumerate(data)}
     else:
+        if metadata is None:
+            raise ValueError("Must provide metadata.")
         if any(g not in metadata.columns for g in eval_cv_groups):
             raise KeyError("Not all parameters in eval_cv_groups found in metadata.")
-        metadata = metadata.loc[metadata["document_id"].isin(set(preprocessed_data["document_id"]))].copy()
-        document_groups = metadata.set_index("document_id")[eval_cv_groups].apply(tuple,axis=1).to_dict()
+        document_groups = metadata.set_index("document_id")[eval_cv_groups].apply(tuple, axis=1).to_dict()
     ## Reverse Document Groups
     document_groups_r = {}
     for x, y in document_groups.items():
@@ -422,13 +358,72 @@ def _sample_splits(preprocessed_data,
         dev_g = sorted([groups[ind] for ind in (groups_assign == k_dev).nonzero()[0]])
         train_g = sorted(groups[ind] for ind in np.logical_or.reduce([groups_assign == f for f in k_train]).nonzero()[0])
         ## Translate to Data Indices
-        train_doc = set.union(*[document_groups_r[g] for g in train_g])
-        dev_doc = set.union(*[document_groups_r[g] for g in dev_g])
-        test_doc = set.union(*[document_groups_r[g] for g in test_g])
+        train_doc = set.union(*[document_groups_r[g] for g in train_g]) & accept_doc_ids
+        dev_doc = set.union(*[document_groups_r[g] for g in dev_g]) & accept_doc_ids
+        test_doc = set.union(*[document_groups_r[g] for g in test_g]) & accept_doc_ids
         ## Check Mutual Exclusion
         assert len(train_doc & dev_doc) == 0
         assert len(train_doc & test_doc) == 0
         assert len(dev_doc & test_doc) == 0
+        ## Store
+        splits[k] = {"train":train_doc, "dev":dev_doc, "test":test_doc}
+    ## Return
+    return splits
+
+def _sample_splits_monte_carlo(preprocessed_data,
+                               data,
+                               metadata=None,
+                               eval_cv=10,
+                               eval_cv_groups=None,
+                               split_frac=[7,2,1],
+                               random_state=42,
+                               verbose=True):
+    """
+
+    """
+    ## Accepted Document IDs
+    accept_doc_ids = set(preprocessed_data["document_id"])
+    ## Format Split Frac
+    if not all(isinstance(i, int) for i in split_frac):
+        raise ValueError("Expected integer ratios for split_frac")
+    split_frac_sum = sum(split_frac)
+    split_frac = [x / split_frac_sum for x in split_frac]
+    ## Get Groups of Documents Which Should Be Kept Together
+    if eval_cv_groups is None:
+        document_groups = {x["document_id"]:i for i, x in enumerate(data)}
+    else:
+        if metadata is None:
+            raise ValueError("Must provide metadata.")
+        if any(g not in metadata.columns for g in eval_cv_groups):
+            raise KeyError("Not all parameters in eval_cv_groups found in metadata.")
+        document_groups = metadata.set_index("document_id")[eval_cv_groups].apply(tuple, axis=1).to_dict()
+    ## Reverse Document Groups
+    document_groups_r = {}
+    for x, y in document_groups.items():
+        if y not in document_groups_r:
+            document_groups_r[y] = set()
+        document_groups_r[y].add(x)
+    if verbose:
+        print("[Note: Found {:,d} Groups for {:,d} Documents]".format(len(document_groups_r), len(document_groups)))
+    groups = sorted(document_groups_r.keys())
+    ## Run Sampling
+    seed = np.random.RandomState(random_state)
+    splits = {}
+    for k in range(eval_cv):
+        ## Sample Assignments to Train/Dev/Test Set
+        fold_assignments = seed.choice(["train","dev","test"], len(groups), replace=True, p=split_frac)
+        ## Group Assignments
+        train_g = sorted([groups[ind] for ind in (fold_assignments == "train").nonzero()[0]])
+        dev_g = sorted([groups[ind] for ind in (fold_assignments == "dev").nonzero()[0]])
+        test_g = sorted([groups[ind] for ind in (fold_assignments == "test").nonzero()[0]])
+        ## Translate to Data Indices
+        train_doc = set.union(*[document_groups_r[g] for g in train_g]) & accept_doc_ids
+        dev_doc = set.union(*[document_groups_r[g] for g in dev_g]) & accept_doc_ids
+        test_doc = set.union(*[document_groups_r[g] for g in test_g]) & accept_doc_ids
+        ## Check Mutual Exclusion
+        assert len(train_doc & dev_doc) == 0
+        assert len(train_doc & test_doc) == 0
+        assert len(dev_doc & test_doc) == 0        
         ## Store
         splits[k] = {"train":train_doc, "dev":dev_doc, "test":test_doc}
     ## Return
@@ -450,14 +445,17 @@ def _sample_splits_stratified(preprocessed_data,
         max_sample_per_iter = eval_cv
     if max_sample_per_iter < eval_cv:
         raise ValueError("Must specify a max_sample_per_iter of at least the number of folds.")
+    ## Accepted Document IDs
+    accept_doc_ids = set(preprocessed_data["document_id"])
     ## Get Groups of Documents Which Should Be Kept Together
     if eval_cv_groups is None:
-        document_groups = {x:i for i, x in enumerate(preprocessed_data["document_id"])}
+        document_groups = {x["document_id"]:i for i, x in enumerate(data)}
     else:
+        if metadata is None:
+            raise ValueError("Must provide metadata.")
         if any(g not in metadata.columns for g in eval_cv_groups):
             raise KeyError("Not all parameters in eval_cv_groups found in metadata.")
-        metadata = metadata.loc[metadata["document_id"].isin(set(preprocessed_data["document_id"]))].copy()
-        document_groups = metadata.set_index("document_id")[eval_cv_groups].apply(tuple,axis=1).to_dict()
+        document_groups = metadata.set_index("document_id")[eval_cv_groups].apply(tuple, axis=1).to_dict()
     ## Reverse Document Groups
     document_groups_r = {}
     for x, y in document_groups.items():
@@ -536,9 +534,9 @@ def _sample_splits_stratified(preprocessed_data,
         dev_g = sorted([groups[ind] for ind in (groups_assign == k_dev).nonzero()[0]])
         train_g = sorted(groups[ind] for ind in np.logical_or.reduce([groups_assign == f for f in k_train]).nonzero()[0])
         ## Translate to Data Indices
-        train_doc = set.union(*[document_groups_r[g] for g in train_g])
-        dev_doc = set.union(*[document_groups_r[g] for g in dev_g])
-        test_doc = set.union(*[document_groups_r[g] for g in test_g])
+        train_doc = set.union(*[document_groups_r[g] for g in train_g]) & accept_doc_ids
+        dev_doc = set.union(*[document_groups_r[g] for g in dev_g]) & accept_doc_ids
+        test_doc = set.union(*[document_groups_r[g] for g in test_g]) & accept_doc_ids
         ## Check Mutual Exclusion
         assert len(train_doc & dev_doc) == 0
         assert len(train_doc & test_doc) == 0
@@ -775,12 +773,14 @@ def create_datasets(args):
     print("[Identifying Dataset Splits]")
     if args.eval_strategy == "k_fold":
         splits = _sample_splits(preprocessed_data=preprocessed_data,
+                                data=data,
                                 metadata=metadata,
                                 eval_cv=args.eval_cv,
                                 eval_cv_groups=args.eval_cv_groups,
                                 random_state=args.random_state)
     elif args.eval_strategy == "monte_carlo":
         splits = _sample_splits_monte_carlo(preprocessed_data=preprocessed_data,
+                                            data=data,
                                             metadata=metadata,
                                             eval_cv=args.eval_cv,
                                             eval_cv_groups=args.eval_cv_groups,
@@ -803,8 +803,6 @@ def create_datasets(args):
                                                        split_frac=args.eval_mc_split_frac,
                                                        max_sample_per_iter=None,
                                                        random_state=args.random_state)
-    elif args.eval_strategy == "redundant":
-        splits = _sample_splits_redundant(preprocessed_data=preprocessed_data)
     ## Isolate Subset (If Desired)
     if args.eval_cv_fold is not None:
         splits = {x:splits[x] for x in args.eval_cv_fold}
@@ -1112,7 +1110,7 @@ def run_fold_train(args,
                                  eval_strategy=args.model_eval_strategy,
                                  eval_train=args.eval_train,
                                  eval_test=args.eval_test,
-                                 save_frequency=args.model_save_frequency,
+                                 save_criteria=args.model_save_criteria,
                                  weighting_entity=args.weighting_entity,
                                  weighting_attribute=args.weighting_attribute,
                                  use_first_index=args.attribute_use_first_index,
@@ -1128,9 +1126,9 @@ def run_fold_train(args,
     ## Cache Training Logs
     print("[Caching Primary Model Training Logs]")
     _ = torch.save(training_logs, f"{fold_output_dir}/train.log.pt")
-    ## Cache Model State
-    if args.model_save_frequency is not None and args.model_save_frequency > 0:
-        print("[Caching Primary Model]")
+    ## Cache Final Model State (Regardless of Performance)
+    if args.model_save_last:
+        print("[Caching Last Primary Model]")
         _ = torch.save(model.state_dict(), f"{fold_output_dir}/model.pt")
     ## Done
     print(f"[Fold {fold} Complete]")
