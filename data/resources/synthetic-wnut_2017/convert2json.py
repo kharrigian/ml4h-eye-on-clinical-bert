@@ -112,7 +112,7 @@ for split in ["train","validation","test"]:
         })
 
 ## Cache
-annotation_cache_dir = "./data/annotations/synthetic-wnut_2017/labeled-processed/"
+annotation_cache_dir = "./data/annotations/synthetic-wnut_2017/processed/"
 if not os.path.exists(annotation_cache_dir):
     _ = os.makedirs(annotation_cache_dir)
 with open(f"{annotation_cache_dir}/annotations.formatted.json", "w") as the_file:

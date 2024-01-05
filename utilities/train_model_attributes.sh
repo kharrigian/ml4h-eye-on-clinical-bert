@@ -4,7 +4,7 @@ echo "~~~ Beginning Attribute Model Training ~~~"
 python -u scripts/model/train.py \
         --output_dir "data/models/classifiers/synthetic-wnut_2017-attributes/" \
         --rm_existing \
-        --datasets "data/annotations/synthetic-wnut_2017/labeled-processed/annotations.formatted.json" \
+        --datasets "data/annotations/synthetic-wnut_2017/processed/annotations.formatted.json" \
         --encoder bert-base-cased \
         --tokenizer bert-base-cased \
         --split_input \
