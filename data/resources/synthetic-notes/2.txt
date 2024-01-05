@@ -1,0 +1,25 @@
+[[[ENCOUNTER ICD-10 CODES]]]
+[[H33.4: Retinal detachment with retinal break, unspecified]]
+[[Z98.89: Other specified post-surgical condition]]
+
+[[[PROGRESS NOTE]]]
+The patient presented for a postoperative follow-up after undergoing surgery to address retinal detachment. The procedure involved pneumatic retinopexy with laser photocoagulation. The patient reports a gradual improvement in vision since the surgery.
+
+Visual acuity measured at 20/40 in the affected eye, an improvement from preoperative acuity. Slit-lamp examination revealed a well-healed conjunctival incision site. Fundus examination showed successful reattachment of the retina with no evidence of residual detachment or breaks. The gas bubble from the pneumatic retinopexy is still present, and the patient was advised on proper head positioning to facilitate gas absorption.
+
+Patient instructed to continue prescribed postoperative medications, including topical antibiotics and corticosteroids. Emphasized the importance of follow-up appointments for ongoing monitoring.
+
+[[[PROBLEM LIST]]]
+[[H33.4: Retinal detachment with retinal break, unspecified]]
+[OVERVIEW]
+The patient underwent surgery for retinal detachment with a retinal break.
+
+[ASSESSMENT & PLAN]
+Successful reattachment of the retina observed during the postoperative examination. Advised the patient on proper head positioning for optimal gas absorption. Continued monitoring and follow-up appointments scheduled to ensure the long-term stability of the retinal repair.
+
+[[Z98.89: Other specified post-surgical condition]]
+[OVERVIEW]
+The patient is in the post-surgical period following retinal detachment repair.
+
+[ASSESSMENT & PLAN]
+The conjunctival incision site is well-healed. Patient experiencing gradual improvement in vision. Continued use of prescribed postoperative medications and adherence to follow-up appointments are crucial for ongoing assessment and management. Further instructions provided on activity restrictions and signs of potential complications, with emphasis on prompt reporting.

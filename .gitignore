@@ -6,6 +6,11 @@
 *dist/
 *.err
 *.out
+*.ipynb_checkpoints*
 
 ## Data
-data/raw
+data/resources/synthetic-wnut_2017/raw/
+data/models/
+!data/models/README.md
+data/annotations/
+!data/annotations/README.md
