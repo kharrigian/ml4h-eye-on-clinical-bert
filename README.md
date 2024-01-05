@@ -32,6 +32,16 @@ In the interim, we have gathered two synthetic datasets which can be used for te
 
 Users of this code repository may refer to these synthetic datasets as a guide for formatting their own clinical note datasets. As shown by the usage of the W-NUT Shared Task dataset, our code can also be adapted to support non-clinical applications with relative ease.
 
+## Installation
+
+To use code in this repository, you should start by installing necessary dependencies and the `cce` library. The easiest way to do this is by invoking the following command from the root of this repository.
+
+```bash
+pip install -e .
+```
+
+We recommend using `conda` to manage your environment. We developed all code using Python 3.10 on a unix-based remote server. GPU access is highly recommended for language model and classifier training, but not required.
+
 ## Usage
 
 Each subsection below details a functionality provided by this code repository. We have compiled several bash files in the `utilities/` directory which include example system commands for each functionality. The series of commands presented below is intended to present the expected runtime order, not necessarily to be invoked verbatim.
