@@ -1,8 +1,8 @@
 #!/bin/bash
 
-echo "~~~ Beginning Training Script ~~~"
+echo "~~~ Beginning Entity Model Training ~~~"
 python -u scripts/model/train.py \
-        --output_dir "data/models/classifiers/synthetic-notes/" \
+        --output_dir "data/models/classifiers/synthetic-wnut_2017-entity/" \
         --rm_existing \
         --datasets "data/annotations/synthetic-wnut_2017/labeled-processed/annotations.formatted.json" \
         --encoder bert-base-cased \
@@ -16,7 +16,8 @@ python -u scripts/model/train.py \
         --sequence_split_type_input continuous \
         --entity_key label \
         --attribute_keys wnut \
-        --include_attribute \
+        --include_entity \
+        --include_attributes \
         --exclude_autolabel \
         --exclude_non_specified \
         --eval_cv 5 \
@@ -40,7 +41,7 @@ python -u scripts/model/train.py \
         --model_lr 0.00001 \
         --model_dropout_p 0.1 \
         --model_weight_decay 0.01 \
-        --model_n_steps 100 \
+        --model_n_steps 1000 \
         --model_eval_strategy "steps" \
         --model_eval_frequency 50 \
         --attributes_hidden_size 256 \
@@ -54,5 +55,3 @@ python -u scripts/model/train.py \
         --baseline_use_char \
         --random_state 42 \
         --gpu_id -1
-
-

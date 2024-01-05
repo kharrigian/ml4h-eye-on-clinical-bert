@@ -297,6 +297,7 @@ def collate_entity_attribute(batch,
     ## Combine the Non-Tensor Elements
     entity_spans = None
     attribute_spans = None
+    attribute_character_spans = None
     if n_entities is not None:
         entity_spans = _get_flattened_spans(batch=batch,
                                             span_key="entity_spans",

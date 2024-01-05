@@ -456,7 +456,9 @@ def train(dataset,
                         overall_dev_loss = 0
                         overall_dev_macro_f1 = [0, 0]
                         if split_performance["valid"]["entity"]:
-                            raise NotImplementedError("Not yet implemented.")
+                            overall_dev_loss += split_performance["entity"]["loss"]
+                            overall_dev_macro_f1[0] += 1
+                            overall_dev_macro_f1[1] += split_performance["entity"]["scores_entity"]["strict"]["f1-score"]
                         if split_performance["valid"]["attributes"]:
                             for task, task_loss in split_performance["attributes"]["loss"].items():
                                 overall_dev_loss += task_loss

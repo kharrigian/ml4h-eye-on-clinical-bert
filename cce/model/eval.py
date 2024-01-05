@@ -496,7 +496,7 @@ def evaluate(model,
     entity_loss = 0 if dataset._encoder_entity is not None else None
     entity_predictions = [[] for _ in range(n_entity_classes)] if dataset._encoder_entity is not None else None
     attribute_loss = {at:0 for at in model.get_attributes()} if dataset._encoder_attributes is not None else None
-    attribute_loss_by_entity = {at:torch.zeros((len(dataset._encoder_attributes[at].get_tasks()), 2)) for at in model.get_attributes()}
+    attribute_loss_by_entity = {at:torch.zeros((len(dataset._encoder_attributes[at].get_tasks()), 2)) for at in model.get_attributes()} if dataset._encoder_attributes is not None else None
     attribute_predictions = {at:[] for at in model.get_attributes()} if dataset._encoder_attributes is not None else None
     entity_spans = [[], []]
     n_batches_ent = 0 if dataset._encoder_entity is not None else None
