@@ -1156,7 +1156,6 @@ def run_fold_evaluate(args,
     ## Initialize Model
     print("[Initializing Model]")
     model, model_init = initialize_model(args=args,
-                                         train_dataset=dataset["train"],
                                          encoder_entity=dataset["train"]._encoder_entity,
                                          encoder_attributes=dataset["train"]._encoder_attributes,
                                          vocab2ind=vocab2ind,
