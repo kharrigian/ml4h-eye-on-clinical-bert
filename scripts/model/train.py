@@ -39,8 +39,6 @@ from cce.model.labelers import LabelEncoder, display_task_summary, display_data_
 WARM_START_BREAKING_KEYS = [
     "encoder",
     "tokenizer",
-    "merge_subwords",
-    "vocab_min_freq",
     "entity_key",
     "attribute_keys",
     "include_entity",
@@ -67,9 +65,7 @@ WARM_START_BREAKING_KEYS = [
 SPECIFIC_WARM_START_BREAKING_KEYS = {
     "encoder":[
         "encoder",
-        "tokenizer",
-        "merge_subwords",
-        "vocab_min_freq",
+        "tokenizer"
     ],
     "combiner":[
         "encoder",
