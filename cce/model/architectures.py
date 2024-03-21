@@ -141,7 +141,9 @@ class NERTaggerModel(torch.nn.Module):
         self.encoder = AutoModel.from_pretrained(token_encoder,
                                                  max_position_embeddings=self._max_sequence_length,
                                                  ignore_mismatched_sizes=True)
-        self._token_encoder_dim = BERT_HIDDEN_DIM
+        ## NOTE: MODIFIED START
+        self._token_encoder_dim = int(list(self.encoder.parameters())[-1].shape[0])
+        ## NOTE: MODIFIED END
         ## Freeze Encoder if Desired
         if self._token_encoder_frozen:
             _ = self._freeze_encoder()

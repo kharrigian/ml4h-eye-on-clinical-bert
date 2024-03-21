@@ -20,6 +20,9 @@ from .datasets import collate_entity_attribute, move_batch_to_device
 from .loss import compute_entity_loss, compute_attribute_loss
 from .eval import evaluate, display_evaluation
 from .architectures import BaselineTaggerModel
+## NOTE: ADDED START
+from .eval import format_entity_predictions, format_attribute_predictions
+## NOTE: ADDED END
 
 ######################
 ### Functions
@@ -258,6 +261,10 @@ def train(dataset,
           eval_train=False,
           eval_test=False,
           save_criteria=None,
+          ## NOTE: ADDED START
+          save_models=False,
+          save_predictions=False,
+          ## NOTE: ADDED END
           weighting_entity=None,
           weighting_attribute=None,
           use_first_index=False,
@@ -274,6 +281,11 @@ def train(dataset,
     """
 
     """
+    ##NOTE: ADDED START
+    ## Check
+    if save_criteria is not None and not (save_models or save_predictions):
+        raise ValueError("Must specify save_models=True or save_predictions=True if save_criteria is not None.")
+    ##NOTE: ADDED END
     ## Device Formatting
     training_device = get_device(gpu_id)
     print(f">> WARNING: Using Following Device for Training -- {training_device}")
@@ -429,6 +441,9 @@ def train(dataset,
             if ((is_first_update and eval_first_update) or is_last_update or (accum_take_step and eval_strategy == "steps" and n_steps % eval_frequency == 0) or (accum_take_step and eval_strategy == "epochs" and b == len(train_batches) - 1 and (epoch + 1) % eval_frequency == 0)):
                 ## Time of Evaluation
                 eval_time = datetime.now().isoformat()
+                ## Prediction Cache
+                all_split_entity_predictions = []
+                all_split_attribute_predictions = []
                 ## Run Evaluation
                 for split in ["train","dev","test"]:
                     ## Skip Testing If Not Appropriate
@@ -445,7 +460,33 @@ def train(dataset,
                                                  attribute_weights=attribute_weights,
                                                  desc=split.title(),
                                                  device=training_device,
-                                                 use_first_index=use_first_index)
+                                                 use_first_index=use_first_index,
+                                                 ## NOTE: ADDED START
+                                                 return_predictions=save_predictions
+                                                 ## NOTE: ADDED END
+                                                 )
+                    ## NOTE: ADDED START
+                    ## Prediction Formatted
+                    if save_predictions:
+                        if split_performance["valid"]["entity"]:
+                            print("[Formatting Entity Predictions: {}]".format(split))
+                            split_entity_predictions = format_entity_predictions(entity_predictions=split_performance["entity"]["predictions"],
+                                                                                 dataset=dataset[split],
+                                                                                 vocab2ind=model._token_encoder_vocab)
+                            split_entity_predictions["split"] = split
+                            all_split_entity_predictions.append(split_entity_predictions)
+                            ## Drop Predictions from Performance Dict
+                            _ = split_performance["entity"]["predictions"] = None
+                        if split_performance["valid"]["attributes"]:
+                            print("[Formatting Attribute Predictions: {}]".format(split))
+                            split_attribute_predictions = format_attribute_predictions(attribute_predictions=split_performance["attributes"]["predictions"],
+                                                                                       dataset=dataset[split],
+                                                                                       vocab2ind=model._token_encoder_vocab)
+                            split_attribute_predictions["split"] = split
+                            all_split_attribute_predictions.append(split_attribute_predictions)
+                            ## Drop Predictions
+                            split_performance["attributes"]["predictions"] = None
+                    ## NOTE: ADDED END
                     ## Show User Performance
                     print("*"*50 + f" {split.title()} Performance " + "*"*50)
                     _ = display_evaluation(split_performance)
@@ -511,8 +552,18 @@ def train(dataset,
                         best_checkpoint_dir = f"{checkpoint_dir}/checkpoint-{n_steps}/"
                         print(f">> Saving new checkpoint: '{best_checkpoint_dir}'")
                         _ = os.makedirs(best_checkpoint_dir)
-                        _ = torch.save(model.state_dict(), f"{best_checkpoint_dir}/model.pt")
-                        _ = torch.save(training_log, f"{best_checkpoint_dir}/train.log.pt")                    
+                        ## NOTE: ADDED START
+                        if save_models:
+                            _ = torch.save(model.state_dict(), f"{best_checkpoint_dir}/model.pt")
+                            _ = torch.save(training_log, f"{best_checkpoint_dir}/train.log.pt")                    
+                        if save_predictions:
+                            if len(all_split_entity_predictions) > 0:
+                                all_split_entity_predictions = pd.concat(all_split_entity_predictions, axis=0, ignore_index=True)
+                                _ = all_split_entity_predictions.to_json(f"{best_checkpoint_dir}/predictions.entity.json", index=False, orient="records", indent=5)
+                            if len(all_split_attribute_predictions) > 0 :
+                                all_split_attribute_predictions = pd.concat(all_split_attribute_predictions, axis=0, ignore_index=True)
+                                _ = all_split_attribute_predictions.to_json(f"{best_checkpoint_dir}/predictions.attributes.json", index=False, orient="records", indent=5)
+                        ## NOTE: ADDED END
             ## Scheduler Step
             if scheduler is not None and (lr_warmup is None or n_steps >= lr_warmup):
                 scheduler.step()

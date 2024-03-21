@@ -374,7 +374,7 @@ def _format_entity_predictions_error_type(row):
     for et in ent_true:
         if et in ent_pred:
             counts["TP_Exact"] += 1
-        else:
+        elif et not in ent_pred and len(ent_pred) > 0: ## NOTE: Modified
             counts["TP_Partial"] += 1
     ## Return
     return counts
@@ -387,7 +387,7 @@ def format_entity_predictions(entity_predictions,
     """
     ## Format
     ent_true = np.array(entity_predictions[0])
-    ent_pred = np.array(entity_predictions[1])
+    ent_pred = np.array(entity_predictions[1]) if len(entity_predictions[1]) > 0 else None ## NOTE: MODIFIED
     ## Reverse Vocab Index
     ind2vocab = None
     if vocab2ind is not None:
@@ -398,14 +398,14 @@ def format_entity_predictions(entity_predictions,
     for d, (doc_id, doc_tokens, doc_tags) in enumerate(zip(dataset._document_ids, dataset._token_ids, dataset._tagged_sequences)):
         ## Isolate Label Set
         d_true = ent_true[ent_true[:,0]==d]
-        d_pred = ent_pred[ent_pred[:,0]==d]
+        d_pred = ent_pred[ent_pred[:,0]==d] if ent_pred is not None else None ## NOTE: MODIFIED
         ## Get Character to Token Mapping for Ground Truth
         char_map_true = _get_tag_span_mapping(doc_tags) 
         ## Iterate Through Tasks
         for t, task in enumerate(dataset._encoder_entity.get_tasks()):
             ## Bounds
             task_ent_true = d_true[d_true[:,-1]==t][:,1:3]
-            task_ent_pred = d_pred[d_pred[:,-1]==t][:,1:3]
+            task_ent_pred = d_pred[d_pred[:,-1]==t][:,1:3] if d_pred is not None else np.zeros(shape=(0,2), dtype=int) ## NOTE: MODIFIED
             ## Align Bounds
             task_ent_groups = _align_entities(task_ent_true, task_ent_pred)            
             ## Cache Bound Groups

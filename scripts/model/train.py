@@ -156,12 +156,16 @@ def parse_command_line():
     _ = parser.add_argument("--model_eval_frequency", type=int, default=1, help="Number of update steps between evaluation subroutines")
     _ = parser.add_argument("--model_eval_strategy", type=str, default="epochs", choices={"epochs","steps"},help="Whether evaluation frequency is interpreted as steps or epochs")
     _ = parser.add_argument("--model_save_criteria", type=str, default=None, choices={None,"loss","f1","all"}, help="Criteria for choosing model to save (if any)")
+    ## NOTE: ADDED START
+    _ = parser.add_argument("--model_save_models", action="store_true", default=False)
+    _ = parser.add_argument("--model_save_predictions", action="store_true", default=False)
+    ## NOTE: ADDED END
     _ = parser.add_argument("--model_save_last", action="store_true", default=False, help="If included, will save model from final step regardless of whether it is the best.")
     _ = parser.add_argument("--early_stopping_tol", type=float, default=0.001, help="Relative loss decrease requirement.")
     _ = parser.add_argument("--early_stopping_patience", type=int, default=5, help="Number of evaluations before deeming the loss as stagnant/increasing.")
     _ = parser.add_argument("--early_stopping_warmup", type=int, default=None, help="If included, wait this many steps before checking early stopping criteria.")
     _ = parser.add_argument("--weighting_entity", type=str, default=None, choices={"balanced"}, help="If desired, what type of class weighting to use for entity loss.")
-    _ = parser.add_argument("--weighting_attribute", type=str, default=None, choices={"balanced"}, help="If deisred, what type of class weighting to use for attribute loss.")
+    _ = parser.add_argument("--weighting_attribute", type=str, default=None, choices={"balanced"}, help="If desired, what type of class weighting to use for attribute loss.")
     _ = parser.add_argument("--use_crf", action="store_true", default=False,help="If included, will stack a CRF on-top of linear entity heads")
     _ = parser.add_argument("--use_lstm", action="store_true", default=False, help="If included, will stack an LSTM on top-of encoding..")
     _ = parser.add_argument("--use_entity_token_bias", action="store_true", default=False, help="Whether to bias entity models with knowledge of regex token matches.")
@@ -195,6 +199,9 @@ def parse_command_line():
     _ = parser.add_argument("--gpu_id", type=int, nargs="*", default=None, help="Which GPU IDs to use.")
     _ = parser.add_argument("--gpu_hold", action="store_true", default=False, help="If true, initialize a tensor to acquire a GPU lock.")
     _ = parser.add_argument("--evaluate", action="store_true", default=False, help="If included, run evaluation without training.")
+    ## NOTE: ADDED START
+    _ = parser.add_argument("--baseline_skip", action="store_true", default=False, help="If included, don't run a baseline training procedure.")
+    ## NOTE: ADDED END
     _ = parser.add_argument("--baseline_only", action="store_true", default=False, help="If included, only run baseline training procedure.")
     _ = parser.add_argument("--baseline_use_char", action="store_true", default=False, help="If included, token baseline will actually just use raw regex text.")
     args = parser.parse_args()
@@ -209,8 +216,9 @@ def parse_command_line():
         raise FileNotFoundError("Must provide an output directory (--output_dir)")
     if args.model_init is not None and not os.path.exists(args.model_init):
         raise FileNotFoundError(f"Missing required file to perform model initialization: {args.model_init}")
-    if args.no_training and args.model_init is None:
-        raise ValueError("If generating plots only (--no_training), must provide a model checkpoint (--model_init).")
+    if args.no_training:
+        if args.model_init is None:
+            print(">> WARNING - No model_init provided alongside --no_training flag. This may be okay depending on purpose.")
     if args.evaluate and args.model_init is None:
         raise ValueError("If evaluating a model, you must provide a --model_init.")
     if args.sequence_split_type_input == "centered" and args.include_entity:
@@ -704,6 +712,21 @@ def create_datasets(args):
             preprocessed_data["document_id"].append(datum["document_id"])
             preprocessed_data["split"].append(datum["metadata"].get("split",None))
             preprocessed_data["text"].append(datum["text"])
+    
+    # ##NOTE: ADDED START Downsampling?
+    # tag_distribution = [[len(x), len(list(filter(lambda i: len(i[1]) > 0, x)))] for x in preprocessed_data["tags"]]
+    # tag_distribution_df = pd.DataFrame(tag_distribution, columns=["n_tokens","n_tagged_tokens"])
+    # print((tag_distribution_df["n_tagged_tokens"] > 0).value_counts(normalize=False).to_string())
+    # with_tag = [i for i, x in enumerate(tag_distribution) if x[1] > 0]
+    # without_tag = [i for i, x in enumerate(tag_distribution) if x[1] == 0]
+    # seed = np.random.RandomState(42)
+    # without_tag_ds = sorted(seed.choice(without_tag, len(with_tag) // 2, replace=False))
+    # # ds_mask = sorted(with_tag + without_tag_ds)
+    # ds_mask = with_tag
+    # for key in preprocessed_data.keys():
+    #     preprocessed_data[key] = [preprocessed_data[key][i] for i in ds_mask]
+    # ##NOTE: ADDED END
+
     ## Update User to Preprocessing Output
     print("[Preprocessing Complete. Started with {} Examples. Ended with {} Examples. {} Were Split]".format(len(data), len(preprocessed_data["tags"]), n_split))
     ## Token Distribution
@@ -1063,16 +1086,19 @@ def run_fold_train(args,
                                             vocab2ind)
     _ = dataset_labels.to_csv(f"{fold_output_dir}/labels.csv",index=False)
     ## Baseline Performance Metrics
-    print("[Gathering Baseline Performance Metrics]")
-    baseline_training_logs, _ = train_baseline(dataset=dataset,
-                                               eval_train=args.eval_train,
-                                               eval_test=args.eval_test,
-                                               weighting_entity=args.weighting_entity,
-                                               weighting_attribute=args.weighting_attribute,
-                                               use_char=args.baseline_use_char)
-    print("[Caching Baseline Training Logs]")
-    for mode, mode_logs in baseline_training_logs.items():
-        _ = torch.save(mode_logs, f"{fold_output_dir}/baseline.{mode}.train.log.pt")
+    ## NOTE: ADDED START
+    if not args.baseline_skip:
+    ## NOTE: ADDED END
+        print("[Gathering Baseline Performance Metrics]")
+        baseline_training_logs, _ = train_baseline(dataset=dataset,
+                                                eval_train=args.eval_train,
+                                                eval_test=args.eval_test,
+                                                weighting_entity=args.weighting_entity,
+                                                weighting_attribute=args.weighting_attribute,
+                                                use_char=args.baseline_use_char)
+        print("[Caching Baseline Training Logs]")
+        for mode, mode_logs in baseline_training_logs.items():
+            _ = torch.save(mode_logs, f"{fold_output_dir}/baseline.{mode}.train.log.pt")
     if args.baseline_only:
         print(f"[Baseline Only Run. Fold {fold} Complete.]")
         return None
@@ -1107,6 +1133,10 @@ def run_fold_train(args,
                                  eval_train=args.eval_train,
                                  eval_test=args.eval_test,
                                  save_criteria=args.model_save_criteria,
+                                 ## NOTE: ADDED START
+                                 save_models=args.model_save_models,
+                                 save_predictions=args.model_save_predictions,
+                                 ## NOTE: ADDED END
                                  weighting_entity=args.weighting_entity,
                                  weighting_attribute=args.weighting_attribute,
                                  use_first_index=args.attribute_use_first_index,
@@ -1118,7 +1148,11 @@ def run_fold_train(args,
                                  model_init=model_init if not args.model_init_reset_training else None,
                                  checkpoint_dir=f"{fold_output_dir}/checkpoints/",
                                  gpu_id=args.gpu_id,
-                                 no_training=args.no_training)
+                                 no_training=args.no_training,
+                                 ## NOTE: ADDED START
+                                 eval_first_update=False
+                                 ## NOTE: ADDED END
+    )
     ## Cache Training Logs
     print("[Caching Primary Model Training Logs]")
     _ = torch.save(training_logs, f"{fold_output_dir}/train.log.pt")

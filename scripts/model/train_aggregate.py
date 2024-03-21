@@ -561,7 +561,7 @@ def plot_loss_curves(entity_cache,
             ps_df = ps_df.loc[ps_df["steps"] != 1, :]
             ps_df_agg_ind = eval_strategy
             ## Determine Subplot
-            pax = ax[s, p] if len(subplots) > 1 else ax[s]
+            pax = ax[s, p] if len(subplots) > 1 and len(splits) > 1 else ax[s] if len(splits) > 1 else ax[p] if len(subplots) > 1 else ax ## NOTE: MODIFIED (Edge case - single split)
             ## Plot
             if show_average:
                 ps_df_agg = ps_df.groupby([ps_df_agg_ind]).agg({"score":[np.nanmean, np.nanstd, mean_ci]})["score"]
@@ -653,7 +653,7 @@ def plot_performance_curves(metric,
     for p, subplot in enumerate(subplots):
         for s, split in enumerate(splits):
             ## Determine Subplot
-            pax = ax[s, p] if len(subplots) > 1 else ax[s]
+            pax = ax[s, p] if len(subplots) > 1 and len(splits) > 1 else ax[p] if len(subplots) > 1 else ax[s] if len(splits) > 1 else ax ## NOTE: Modified
             ## Get Data
             if ptype == "entity":
                 ps_df = entity_cache[subplot].loc[(entity_cache[subplot]["split"]==split)&
