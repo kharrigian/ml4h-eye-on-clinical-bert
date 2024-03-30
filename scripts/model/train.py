@@ -12,6 +12,7 @@ import os
 import sys
 import json
 import argparse
+from copy import deepcopy
 from math import gcd
 from glob import glob
 from collections import Counter
@@ -27,81 +28,9 @@ from cce.util import labels as label_utils
 from cce.model import eval
 from cce.model.datasets import EntityAttributeDataset
 from cce.model.architectures import NERTaggerModel
-from cce.model.train_utils import train, train_baseline, get_device, initialize_class_weights
+from cce.model.train_utils import train, train_baseline, get_device, initialize_class_weights, sample_splits
 from cce.model.tokenizers import AttributeTaggingTokenizer, PostProcessTokenizer, AutoTokenizer
 from cce.model.labelers import LabelEncoder, display_task_summary, display_data_summary, apply_attribute_limit
-
-#######################
-### Globals
-#######################
-
-## Configuration Changes That Prevent Model Warm Starts
-WARM_START_BREAKING_KEYS = [
-    "encoder",
-    "tokenizer",
-    "entity_key",
-    "attribute_keys",
-    "include_entity",
-    "include_attribute",
-    "split_input",
-    "max_sequence_length_model",
-    "sequence_overlap_model",
-    "sequence_overlap_type_model",
-    "use_crf",
-    "use_lstm",
-    "use_entity_token_bias",
-    "use_attribute_concept_bias",
-    "entity_token_bias_type",
-    "lstm_hidden_size",
-    "lstm_bidirectional",
-    "lstm_num_layers",
-    "entity_hidden_size",
-    "attributes_hidden_size",
-    "exclude_non_specified",
-    "separate_negation",
-]
-
-## Specific Layer Breaking Keys
-SPECIFIC_WARM_START_BREAKING_KEYS = {
-    "encoder":[
-        "encoder",
-        "tokenizer"
-    ],
-    "combiner":[
-        "encoder",
-        "lstm_hidden_size",
-        "lstm_bidirectional",
-        "lstm_num_layers",
-    ],
-    "entity_heads":[
-        "encoder",
-        "tokenizer",
-        "entity_key",
-        "use_lstm",
-        "use_entity_token_bias",
-        "entity_token_bias_type",
-        "lstm_hidden_size",
-        "lstm_bidirectional",
-        "lstm_num_layers",
-        "entity_hidden_size",
-    ],
-    "entity_crf":[
-
-    ],
-    "attribute_heads":[
-        "encoder",
-        "tokenizer",
-        "use_lstm",
-        "lstm_hidden_size",
-        "lstm_bidirectional",
-        "lstm_num_layers",
-        "attributes_hidden_size",
-        "attribute_keys",
-        "separate_negation",
-        "exclude_non_specified",
-        "use_attribute_concept_bias"
-    ]
-}
 
 #######################
 ### Functions
@@ -127,6 +56,7 @@ def parse_command_line():
     _ = parser.add_argument("--attribute_keys",type=str,nargs="*",default="default",help="Attribute token classification tasks.")
     _ = parser.add_argument("--include_entity", action="store_true", default=False, help="Whether to model entities (NER)")
     _ = parser.add_argument("--include_attribute", action="store_true", default=False, help="Whether to model attributes.")
+    _ = parser.add_argument("--entity_types_exclude", type=str, default=None, nargs="*", help="Prefixes for entities to exclude from dataset.")
     _ = parser.add_argument("--cache_label_encoders", action="store_true", default=False, help="If included, store the dataset label encoders.")
     _ = parser.add_argument("--limit_spans_per_document", type=int, default=None, help="If included, restrict to maximimally this many spans per attribute per document.")
     _ = parser.add_argument("--limit_documents_per_group", type=int, default=None, help="If included, restrict to maximally this many documents per group.")
@@ -134,9 +64,6 @@ def parse_command_line():
     _ = parser.add_argument("--limit_spans_per_document_label_stratify", action="store_true", default=False, help="If include, count spans in a document by label instead of overall")
     _ = parser.add_argument("--limit_spans_per_group_label_stratify", action="store_true", default=False, help="If include, count spans in a group by label instead of overall")
     _ = parser.add_argument("--limit_group", type=str, nargs="+", default=None, help="Which metadata attributes to use as grouping variables.")
-    _ = parser.add_argument("--model_init", type=str, default=None, help="If desired, can provide a cached model to use as the starting point of training.")
-    _ = parser.add_argument("--model_init_ignore_fold", action="store_true", default=False, help="By default, we assume the model_init folds align with what is being trained.")
-    _ = parser.add_argument("--model_init_reset_training", action="store_true", default=False, help="If including a model_init to initialize weights but you don't want to continue training.")
     _ = parser.add_argument("--model_lr", type=float, default=1e-5,help="Model learning rate")
     _ = parser.add_argument("--model_lr_adaptive_method", type=str, default=None, help="Include if you want to use an adapative learning rate scheduler.", choices={"step","exponential","cosine_annealing_restart"})
     _ = parser.add_argument("--model_lr_warmup", type=int, default=None, help="Whether to wait a warmup number of steps before modifying learning rate.")
@@ -156,26 +83,28 @@ def parse_command_line():
     _ = parser.add_argument("--model_eval_frequency", type=int, default=1, help="Number of update steps between evaluation subroutines")
     _ = parser.add_argument("--model_eval_strategy", type=str, default="epochs", choices={"epochs","steps"},help="Whether evaluation frequency is interpreted as steps or epochs")
     _ = parser.add_argument("--model_save_criteria", type=str, default=None, choices={None,"loss","f1","all"}, help="Criteria for choosing model to save (if any)")
-    ## NOTE: ADDED START
     _ = parser.add_argument("--model_save_models", action="store_true", default=False)
     _ = parser.add_argument("--model_save_predictions", action="store_true", default=False)
-    ## NOTE: ADDED END
     _ = parser.add_argument("--model_save_last", action="store_true", default=False, help="If included, will save model from final step regardless of whether it is the best.")
     _ = parser.add_argument("--early_stopping_tol", type=float, default=0.001, help="Relative loss decrease requirement.")
     _ = parser.add_argument("--early_stopping_patience", type=int, default=5, help="Number of evaluations before deeming the loss as stagnant/increasing.")
     _ = parser.add_argument("--early_stopping_warmup", type=int, default=None, help="If included, wait this many steps before checking early stopping criteria.")
+    _ = parser.add_argument("--early_stopping_criteria", type=str, default="loss", choices={"loss","f1"})
     _ = parser.add_argument("--weighting_entity", type=str, default=None, choices={"balanced"}, help="If desired, what type of class weighting to use for entity loss.")
     _ = parser.add_argument("--weighting_attribute", type=str, default=None, choices={"balanced"}, help="If desired, what type of class weighting to use for attribute loss.")
+    _ = parser.add_argument("--weighting_entity_gamma", type=float, default=1)
+    _ = parser.add_argument("--weighting_attribute_gamma", type=float, default=1)
     _ = parser.add_argument("--use_crf", action="store_true", default=False,help="If included, will stack a CRF on-top of linear entity heads")
-    _ = parser.add_argument("--use_lstm", action="store_true", default=False, help="If included, will stack an LSTM on top-of encoding..")
+    _ = parser.add_argument("--use_crf_informed_prior", action="store_true", default=False, help="If included, initialize transition probabilities using training data counts.")
+    _ = parser.add_argument("--use_lstm", action="store_true", default=False, help="If included, will stack an LSTM on top-of encoding.")
     _ = parser.add_argument("--use_entity_token_bias", action="store_true", default=False, help="Whether to bias entity models with knowledge of regex token matches.")
     _ = parser.add_argument("--entity_token_bias_type", type=str, choices={"uniform","positional"}, default="uniform", help="Uniform bias just indicates that a match is present. Positional indicates whether it's the first token in the matched span.")
     _ = parser.add_argument("--use_attribute_concept_bias", action="store_true", default=False, help="Whether to indicate which concept is present during attribute classification.")
     _ = parser.add_argument("--lstm_hidden_size", type=int, default=768, help="Hidden layer size for LSTM")
     _ = parser.add_argument("--lstm_bidirectional", action="store_true", default=False, help="If included, will use bidirectional LSTM output.")
     _ = parser.add_argument("--lstm_num_layers", type=int, default=1, help="Number of LSTM layers.")
-    _ = parser.add_argument("--entity_hidden_size", type=int, default=None, help="Hidden layer size for entity classification head.")
-    _ = parser.add_argument("--attributes_hidden_size", type=int, default=None, help="Hidden layer size for attribute classification heads.")
+    _ = parser.add_argument("--entity_hidden_size", type=int, default=None, help="Hidden layer size for entity classification head.", nargs="*")
+    _ = parser.add_argument("--attributes_hidden_size", type=int, default=None, help="Hidden layer size for attribute classification heads.", nargs="*")
     _ = parser.add_argument("--freeze_encoder", action="store_true", default=False, help="If included, do not run backprop on the token encoder.")
     _ = parser.add_argument("--attribute_use_first_index", action="store_true", default=False, help="If included, don't pool the full entity. Instead use first token as representation.")
     _ = parser.add_argument("--exclude_non_specified", action="store_true", default=False,help="If true, don't model unspecified statuses. Treat as missing data instead.")
@@ -183,6 +112,8 @@ def parse_command_line():
     _ = parser.add_argument("--exclude_autolabel", action="store_true", default=False, help="If included, will not include entity labels which were added based on autolabeler without human review.")
     _ = parser.add_argument("--separate_negation", type=str, nargs="*", default=None, help="If True, model negation independently from status.")
     _ = parser.add_argument("--separate_validity", type=str, nargs="*", default=None, help="If True, models each entity's validity outside of the NER context.")
+    _ = parser.add_argument("--separate_entity", type=str, default=None, choices={"separate","merge"}, help="If included, create a single NER model that operates across entity types.")
+    _ = parser.add_argument("--separate_entity_exclude_attributes", type=str, default=None, nargs="*", help="If desired, specify prefixes of entities not to include as part of attribute modeling.")
     _ = parser.add_argument("--random_state", type=int, default=42,help="Random seed for sampling/training/initialization")
     _ = parser.add_argument("--eval_cv", type=int, default=5, help="If desired, can set-up K-fold cross validation. This specifies the K. Otherwise, uses presampled train/dev/test split.")
     _ = parser.add_argument("--eval_cv_groups", type=str, nargs="*", default=None, help="If doing cross-validation, use this to specify which document metadata attributes should be used for splitting.")
@@ -194,14 +125,10 @@ def parse_command_line():
     _ = parser.add_argument("--output_dir", type=str, default=None,help="Where to store outputs/models")
     _ = parser.add_argument("--rm_existing", action="store_true", default=False,help="If using an existing output directory, must include to overwrite.")
     _ = parser.add_argument("--keep_existing", action="store_true", default=False,help="If using an existing output directory, must include to keep data that already exists.")
-    _ = parser.add_argument("--no_training", action='store_true', default=False, help="Load an existing checkpoint / training logs and generate plots without additional training.")
     _ = parser.add_argument("--display_batch_loss", action="store_true", default=False, help="Whether to print cumulative batch loss.")
     _ = parser.add_argument("--gpu_id", type=int, nargs="*", default=None, help="Which GPU IDs to use.")
     _ = parser.add_argument("--gpu_hold", action="store_true", default=False, help="If true, initialize a tensor to acquire a GPU lock.")
-    _ = parser.add_argument("--evaluate", action="store_true", default=False, help="If included, run evaluation without training.")
-    ## NOTE: ADDED START
     _ = parser.add_argument("--baseline_skip", action="store_true", default=False, help="If included, don't run a baseline training procedure.")
-    ## NOTE: ADDED END
     _ = parser.add_argument("--baseline_only", action="store_true", default=False, help="If included, only run baseline training procedure.")
     _ = parser.add_argument("--baseline_use_char", action="store_true", default=False, help="If included, token baseline will actually just use raw regex text.")
     args = parser.parse_args()
@@ -214,13 +141,6 @@ def parse_command_line():
         raise FileNotFoundError("Must provide a valid dataset path (--dataset)")
     if args.output_dir is None:
         raise FileNotFoundError("Must provide an output directory (--output_dir)")
-    if args.model_init is not None and not os.path.exists(args.model_init):
-        raise FileNotFoundError(f"Missing required file to perform model initialization: {args.model_init}")
-    if args.no_training:
-        if args.model_init is None:
-            print(">> WARNING - No model_init provided alongside --no_training flag. This may be okay depending on purpose.")
-    if args.evaluate and args.model_init is None:
-        raise ValueError("If evaluating a model, you must provide a --model_init.")
     if args.sequence_split_type_input == "centered" and args.include_entity:
         raise ValueError("You can only use 'continuous' for sequence_split_type_input if training an NER model.")
     if not args.baseline_only and (args.model_n_steps is None and args.model_n_epochs is None):
@@ -249,14 +169,88 @@ def initialize_gpu_args(args):
     ## Return
     return args, hold
 
+def check_for_cv_completion(args):
+    """
+
+    """
+    ## Check for Existing Fold
+    if args.eval_cv_fold is not None:
+        print("[Checking for Prior Cross Validation Completion]")
+        all_complete = True
+        for fold in args.eval_cv_fold:
+            fold_output_dir = f"{args.output_dir}/fold-{fold}/"
+            if not os.path.exists(fold_output_dir):
+                all_complete = False
+            else:
+                if not os.path.exists(f"{fold_output_dir}/train.log.pt"):
+                    all_complete = False
+                else:
+                    if args.keep_existing:
+                        pass
+                    else:
+                        all_complete = False
+        ## Return
+        return all_complete
+    ## Return
+    return False
+
+def _separate_entities(labels,
+                       handle="merge"):
+    """
+
+    """
+    ## Validate
+    if handle not in ["merge","split"]:
+        raise ValueError("Parameter 'handle' should either be 'merge' or 'split'")
+    ## Base Case
+    if len(labels) <= 1:
+        return labels
+    ## Sort
+    labels = sorted(labels, key=lambda x: x["start"])
+    ## Look for Overlap
+    resolved_label_spans = [labels[0]]
+    resolved_label_spans[0]["label_variants"] = [resolved_label_spans[0]["label"]]
+    for lbl_span in labels[1:]:
+        if lbl_span["start"] < resolved_label_spans[-1]["end"]:
+            if handle == "split":
+                ## Move Current Lbl End to Max of current and previous
+                lbl_span["end"] = max(lbl_span["end"], resolved_label_spans[-1]["end"])
+                ## Move prior span end to start of this span
+                resolved_label_spans[-1]["end"] = lbl_span["start"]
+                ## Normal Variant Update
+                lbl_span["label_variants"] = [lbl_span["label"]]
+                resolved_label_spans.append(lbl_span)
+            elif handle == "merge":
+                ## Extend Prior Span if Necessary
+                resolved_label_spans[-1]["end"] = max(lbl_span["end"], resolved_label_spans[-1]["end"])
+                ## Update
+                resolved_label_spans[-1]["label_variants"] = sorted(set(resolved_label_spans[-1]["label_variants"] + [lbl_span["label"]]))
+            else:
+                raise NotImplementedError("Unexpected handle.")
+        else:
+            lbl_span["label_variants"] = [lbl_span["label"]]
+            resolved_label_spans.append(lbl_span)
+    ## Flatten Merged Labels
+    resolved_label_spans_flat = []
+    for l in resolved_label_spans:
+        for variant in l["label_variants"]:
+            lv = deepcopy(l)
+            lv["label"] = variant
+            _ = lv.pop("label_variants")
+            resolved_label_spans_flat.append(lv)
+    ## Return
+    return resolved_label_spans_flat
+
 def _load_annotations(annotation_file,
                       lbl2task,
-                      attr_label_rename_map=None,
+                      attr_label_rename_map,
                       ignore_non_specified=False,
                       separate_negation=None,
                       separate_validity=None,
+                      separate_entity=None,
                       exclude_icd=False,
-                      exclude_autolabel=False):
+                      exclude_autolabel=False,
+                      entity_types_exclude=None):
     """
     
     """
@@ -270,6 +264,10 @@ def _load_annotations(annotation_file,
             line_data = json.loads(line)
             ## Cache Metadata
             metadata.append({"document_id":line_data["document_id"], **line_data["metadata"]})
+            ## Entity Separation
+            if separate_entity is not None:
+                line_data["labels"] = _separate_entities(labels=line_data["labels"],
+                                                         handle=separate_entity)
             ## Rename Labels
             if attr_label_rename_map is not None:
                 ## Rename
@@ -285,6 +283,9 @@ def _load_annotations(annotation_file,
                     if exclude_icd and lbl.get("in_header",False):
                         continue
                     if exclude_autolabel and lbl.get("in_autolabel_postprocess",False):
+                        continue
+                    ## Exclusion of Entity Types
+                    if entity_types_exclude is not None and any(lbl["label"].startswith(e) for e in entity_types_exclude):
                         continue
                     ## Make Update
                     lbl_updated ={
@@ -316,302 +317,6 @@ def _load_annotations(annotation_file,
     ## Return
     return metadata, data
 
-def _sample_splits(preprocessed_data,
-                   data,
-                   metadata=None,
-                   eval_cv=5,
-                   eval_cv_groups=None,
-                   random_state=42,
-                   verbose=True):
-    """
-
-    """
-    ## Accepted Document IDs Found in Dataset (Not Used for Splitting)
-    accept_doc_ids = set(preprocessed_data["document_id"])
-    ## Get Groups of Documents Which Should Be Kept Together (Splitting Criteria)
-    if eval_cv_groups is None:
-        document_groups = {x["document_id"]:i for i, x in enumerate(data)}
-    else:
-        if metadata is None:
-            raise ValueError("Must provide metadata.")
-        if any(g not in metadata.columns for g in eval_cv_groups):
-            raise KeyError("Not all parameters in eval_cv_groups found in metadata.")
-        document_groups = metadata.set_index("document_id")[eval_cv_groups].apply(tuple, axis=1).to_dict()
-    ## Reverse Document Groups
-    document_groups_r = {}
-    for x, y in document_groups.items():
-        if y not in document_groups_r:
-            document_groups_r[y] = set()
-        document_groups_r[y].add(x)
-    if verbose:
-        print("[Note: Found {:,d} Groups for {:,d} Documents]".format(len(document_groups_r), len(document_groups)))
-    ## Generate Groups and Fold Assignments
-    seed = np.random.RandomState(random_state)
-    groups = sorted(document_groups_r.keys())
-    groups = sorted(groups, key=lambda x: seed.random())
-    groups_assign = np.array([i % eval_cv for i, g in enumerate(groups)])
-    ## Construct Splits
-    splits = {}
-    for k in range(eval_cv):
-        ## K Fold Assignments (1 Test, 1 Dev, eval_cv - 2 Train)
-        k_test = k
-        k_dev = (k_test - 1) % eval_cv
-        k_train = [i % eval_cv for i in range(k_dev - (eval_cv - 2), k_dev)]
-        ## Group Assignments
-        test_g = sorted([groups[ind] for ind in (groups_assign == k_test).nonzero()[0]])
-        dev_g = sorted([groups[ind] for ind in (groups_assign == k_dev).nonzero()[0]])
-        train_g = sorted(groups[ind] for ind in np.logical_or.reduce([groups_assign == f for f in k_train]).nonzero()[0])
-        ## Translate to Data Indices
-        train_doc = set.union(*[document_groups_r[g] for g in train_g]) & accept_doc_ids
-        dev_doc = set.union(*[document_groups_r[g] for g in dev_g]) & accept_doc_ids
-        test_doc = set.union(*[document_groups_r[g] for g in test_g]) & accept_doc_ids
-        ## Check Mutual Exclusion
-        assert len(train_doc & dev_doc) == 0
-        assert len(train_doc & test_doc) == 0
-        assert len(dev_doc & test_doc) == 0
-        ## Store
-        splits[k] = {"train":train_doc, "dev":dev_doc, "test":test_doc}
-    ## Return
-    return splits
-
-def _sample_splits_monte_carlo(preprocessed_data,
-                               data,
-                               metadata=None,
-                               eval_cv=10,
-                               eval_cv_groups=None,
-                               split_frac=[7,2,1],
-                               random_state=42,
-                               verbose=True):
-    """
-
-    """
-    ## Accepted Document IDs
-    accept_doc_ids = set(preprocessed_data["document_id"])
-    ## Format Split Frac
-    if not all(isinstance(i, int) for i in split_frac):
-        raise ValueError("Expected integer ratios for split_frac")
-    split_frac_sum = sum(split_frac)
-    split_frac = [x / split_frac_sum for x in split_frac]
-    ## Get Groups of Documents Which Should Be Kept Together
-    if eval_cv_groups is None:
-        document_groups = {x["document_id"]:i for i, x in enumerate(data)}
-    else:
-        if metadata is None:
-            raise ValueError("Must provide metadata.")
-        if any(g not in metadata.columns for g in eval_cv_groups):
-            raise KeyError("Not all parameters in eval_cv_groups found in metadata.")
-        document_groups = metadata.set_index("document_id")[eval_cv_groups].apply(tuple, axis=1).to_dict()
-    ## Reverse Document Groups
-    document_groups_r = {}
-    for x, y in document_groups.items():
-        if y not in document_groups_r:
-            document_groups_r[y] = set()
-        document_groups_r[y].add(x)
-    if verbose:
-        print("[Note: Found {:,d} Groups for {:,d} Documents]".format(len(document_groups_r), len(document_groups)))
-    groups = sorted(document_groups_r.keys())
-    ## Run Sampling
-    seed = np.random.RandomState(random_state)
-    splits = {}
-    for k in range(eval_cv):
-        ## Sample Assignments to Train/Dev/Test Set
-        fold_assignments = seed.choice(["train","dev","test"], len(groups), replace=True, p=split_frac)
-        ## Group Assignments
-        train_g = sorted([groups[ind] for ind in (fold_assignments == "train").nonzero()[0]])
-        dev_g = sorted([groups[ind] for ind in (fold_assignments == "dev").nonzero()[0]])
-        test_g = sorted([groups[ind] for ind in (fold_assignments == "test").nonzero()[0]])
-        ## Translate to Data Indices
-        train_doc = set.union(*[document_groups_r[g] for g in train_g]) & accept_doc_ids
-        dev_doc = set.union(*[document_groups_r[g] for g in dev_g]) & accept_doc_ids
-        test_doc = set.union(*[document_groups_r[g] for g in test_g]) & accept_doc_ids
-        ## Check Mutual Exclusion
-        assert len(train_doc & dev_doc) == 0
-        assert len(train_doc & test_doc) == 0
-        assert len(dev_doc & test_doc) == 0        
-        ## Store
-        splits[k] = {"train":train_doc, "dev":dev_doc, "test":test_doc}
-    ## Return
-    return splits
-
-def _sample_splits_stratified(preprocessed_data,
-                              data,
-                              metadata,
-                              eval_cv=5,
-                              eval_cv_groups=None,
-                              max_sample_per_iter=None,
-                              random_state=42,
-                              verbose=True):
-    """
-
-    """
-    ## Valdiate
-    if max_sample_per_iter is None:
-        max_sample_per_iter = eval_cv
-    if max_sample_per_iter < eval_cv:
-        raise ValueError("Must specify a max_sample_per_iter of at least the number of folds.")
-    ## Accepted Document IDs
-    accept_doc_ids = set(preprocessed_data["document_id"])
-    ## Get Groups of Documents Which Should Be Kept Together
-    if eval_cv_groups is None:
-        document_groups = {x["document_id"]:i for i, x in enumerate(data)}
-    else:
-        if metadata is None:
-            raise ValueError("Must provide metadata.")
-        if any(g not in metadata.columns for g in eval_cv_groups):
-            raise KeyError("Not all parameters in eval_cv_groups found in metadata.")
-        document_groups = metadata.set_index("document_id")[eval_cv_groups].apply(tuple, axis=1).to_dict()
-    ## Reverse Document Groups
-    document_groups_r = {}
-    for x, y in document_groups.items():
-        if y not in document_groups_r:
-            document_groups_r[y] = set()
-        document_groups_r[y].add(x)
-    if verbose:
-        print("[Note: Found {:,d} Groups for {:,d} Documents]".format(len(document_groups_r), len(document_groups)))
-    ## Translate Data to Label DataFrame
-    document_labels_oh = []
-    for datum in data:
-        datum_lbl_counts = Counter()
-        for lbl in datum["labels"]:
-            for key, value in lbl.items():
-                if key in ["start","end","in_header","in_autolabel_postprocess","valid","label"]:
-                    continue
-                if pd.isnull(value):
-                    continue
-                datum_lbl_counts[(key, lbl["label"], value)] += 1
-        document_labels_oh.append({"document_id":datum["document_id"], **datum_lbl_counts})
-    document_labels_oh = pd.DataFrame(document_labels_oh).set_index("document_id").fillna(0).astype(int)
-    ## Aggregate by Group
-    document_labels_oh["document_group"] = document_labels_oh.index.map(document_groups.get)
-    group_labels_oh = document_labels_oh.groupby(["document_group"]).sum()
-    group_labels_oh = (group_labels_oh > 0).astype(int)
-    group_labels_oh = group_labels_oh.sort_index(axis=0).sort_index(axis=1)
-    ## Isolate Groups Without any Labels
-    groups_no_lbl = group_labels_oh.loc[group_labels_oh.sum(axis=1) == 0].index.tolist()
-    group_labels_oh = group_labels_oh.loc[~group_labels_oh.index.isin(groups_no_lbl)].copy()
-    ## Assignments
-    unassigned = set(group_labels_oh.index.tolist())
-    assignments = {fold:set() for fold in range(eval_cv)}
-    assignment_counts = {target:{fold:0 for fold in range(eval_cv)} for target in group_labels_oh.columns.tolist()}
-    seed = np.random.RandomState(random_state)
-    while len(unassigned) > 0:
-        ## Find the Label With the Smallest Sample Size
-        smallest = group_labels_oh.loc[group_labels_oh.index.isin(unassigned)].sum(axis=0)
-        smallest = smallest.loc[smallest>0].nsmallest(1)
-        ## Identify Candidates with That Label and Shuffle Randomly
-        candidates = group_labels_oh.loc[(group_labels_oh.index.isin(unassigned))&
-                                         (group_labels_oh[smallest.index.item()] > 0)].index.tolist()
-        candidates = sorted(candidates, key=lambda x: seed.random())
-        ## Sample Per Iteration Limit
-        candidates = candidates[:max_sample_per_iter]
-        ## Order Assignment Priority Based on Current Smallest Group for Target (Break Ties Based on Overall Group Size)
-        assignment_priority = sorted(list(range(eval_cv)), key=lambda f: (assignment_counts[smallest.index.item()][f], len(assignments[f])))
-        ## Add Candidates To Folds Based on Priority and Then Remove From Pool
-        for c, candidate in enumerate(candidates):
-            c_assign = assignment_priority[c % eval_cv]
-            assignments[c_assign].add(candidate)
-            unassigned.remove(candidate)
-            for task, present in group_labels_oh.loc[[candidate]].iloc[0].items():
-                assignment_counts[task][c_assign] += present
-    ## Randomly Assign Those Without Any Target Labels
-    groups_no_lbl = sorted(groups_no_lbl)
-    groups_no_lbl = sorted(groups_no_lbl, key=lambda x: seed.random())
-    for f, g in enumerate(groups_no_lbl):
-        assignments[f % eval_cv].add(g)
-    ## Reverse Assignments
-    assignments_r = {}
-    for g, gass in assignments.items():
-        for ass in gass:
-            assignments_r[ass] = g    
-    ## Translate
-    groups = sorted(document_groups_r.keys())
-    groups_assign = np.array([assignments_r[g] for g in groups])
-    ## Construct Splits
-    splits = {}
-    for k in range(eval_cv):
-        ## K Fold Assignments (1 Test, 1 Dev, eval_cv - 2 Train)
-        k_test = k
-        k_dev = (k_test - 1) % eval_cv
-        k_train = [i % eval_cv for i in range(k_dev - (eval_cv - 2), k_dev)]
-        ## Group Assignments
-        test_g = sorted([groups[ind] for ind in (groups_assign == k_test).nonzero()[0]])
-        dev_g = sorted([groups[ind] for ind in (groups_assign == k_dev).nonzero()[0]])
-        train_g = sorted(groups[ind] for ind in np.logical_or.reduce([groups_assign == f for f in k_train]).nonzero()[0])
-        ## Translate to Data Indices
-        train_doc = set.union(*[document_groups_r[g] for g in train_g]) & accept_doc_ids
-        dev_doc = set.union(*[document_groups_r[g] for g in dev_g]) & accept_doc_ids
-        test_doc = set.union(*[document_groups_r[g] for g in test_g]) & accept_doc_ids
-        ## Check Mutual Exclusion
-        assert len(train_doc & dev_doc) == 0
-        assert len(train_doc & test_doc) == 0
-        assert len(dev_doc & test_doc) == 0
-        ## Store
-        splits[k] = {"train":train_doc, "dev":dev_doc, "test":test_doc}
-    ## Return
-    return splits
-
-def _sample_splits_stratified_monte_carlo(preprocessed_data,
-                                          data,
-                                          metadata,
-                                          eval_cv=1,
-                                          eval_cv_groups=None,
-                                          split_frac=[7,2,1],
-                                          max_sample_per_iter=None,
-                                          random_state=42,
-                                          verbose=True):
-    """
-
-    """
-    ## Check Arguments
-    if eval_cv < 1:
-        raise ValueError("eval_cv should be integer at least 1.")
-    ## Format/Reduce Split Frac
-    if not all(isinstance(i, int) for i in split_frac):
-        raise ValueError("Expected integer ratios for split_frac")
-    if len(split_frac) != 3:
-        raise ValueError("Expected split_frac of length 3.")
-    div_ = gcd(*split_frac)
-    split_frac = [int(x / div_) for x in split_frac]
-    n_folds = sum(split_frac)
-    ## Shuffler
-    shuffler = np.random.RandomState(random_state)
-    ## Initialize Fold to Group Map
-    fold_2_group = []
-    for nf, g in zip(split_frac,["train","dev","test"]):
-        for _ in range(nf):
-            fold_2_group.append(g)
-    ## Valdiate
-    if max_sample_per_iter is None:
-        max_sample_per_iter = n_folds
-    if max_sample_per_iter < n_folds:
-        raise ValueError(f"Must specify a max_sample_per_iter of at least the number of folds ({n_folds}).")
-    ## Sample
-    splits = {}
-    for sample in range(eval_cv):
-        ## Shuffle Fold 2 Group
-        _ = shuffler.shuffle(fold_2_group)
-        ## Generate a Stratified Sample
-        sample_splits = _sample_splits_stratified(preprocessed_data=preprocessed_data,
-                                                  data=data,
-                                                  metadata=metadata,
-                                                  eval_cv=n_folds,
-                                                  eval_cv_groups=eval_cv_groups,
-                                                  max_sample_per_iter=max_sample_per_iter,
-                                                  random_state=random_state+sample,
-                                                  verbose=verbose and sample==0)
-        ## Generate Sample Groups
-        sample_groups = {"train":set(),"dev":set(),"test":set()}
-        for g, gf in enumerate(fold_2_group):
-            sample_groups[gf].update(sample_splits[g]["test"])
-        ## Validate
-        assert len(sample_groups["train"] & sample_groups["dev"]) == 0
-        assert len(sample_groups["train"] & sample_groups["test"]) == 0
-        assert len(sample_groups["dev"] & sample_groups["test"]) == 0
-        ## Cache Sample Groups
-        splits[sample] = sample_groups
-    ## Return
-    return splits
-
 def create_datasets(args):
     """
     
@@ -636,11 +341,46 @@ def create_datasets(args):
                                              ignore_non_specified=args.exclude_non_specified,
                                              separate_negation=args.separate_negation,
                                              separate_validity=args.separate_validity is not None,
+                                             separate_entity=args.separate_entity,
                                              exclude_icd=args.exclude_icd,
-                                             exclude_autolabel=args.exclude_autolabel)
+                                             exclude_autolabel=args.exclude_autolabel,
+                                             entity_types_exclude=args.entity_types_exclude)
         ## Cache
         metadata.extend(_metadata)
         data.extend(_data)
+    ## Relabel If Using Entity Separation
+    if args.separate_entity is not None:
+        ## Identify Unique Entities
+        unique_entity_labels = set()
+        for datum in data:
+            for span in datum["labels"]:
+                unique_entity_labels.add(span["label"])
+        unique_entity_labels = sorted(unique_entity_labels)
+        ## Filtering
+        if args.separate_entity_exclude_attributes is not None and len(args.separate_entity_exclude_attributes) > 0:
+            unique_entity_labels = list(filter(lambda l: not any(l.startswith(i) for i in args.separate_entity_exclude_attributes), unique_entity_labels))
+        ## Update User
+        print(">> NOTE - Found {} Unique Entities for Separation: {}".format(len(unique_entity_labels), unique_entity_labels))
+        ## Consolidate Equivalent Spans and Add Variable Indicator
+        for datum in data:
+            ## Group by Span
+            lbl2span = {}
+            for lbl in datum["labels"]:
+                lbl_key = (lbl["start"], lbl["end"])
+                if lbl_key not in lbl2span:
+                    lbl2span[lbl_key] = []
+                lbl2span[lbl_key].append(lbl)
+            ## Add Indicators
+            datum_labels_updated = []
+            for lbl_grp, lbls in lbl2span.items():
+                rep_lbl = deepcopy(lbls[0])
+                lbl_grp_ents = [l["label"] for l in lbls]
+                rep_lbl["label"] = "Entity"
+                for uel in unique_entity_labels:
+                    rep_lbl[f"entity_type={uel}"] = uel in lbl_grp_ents
+                datum_labels_updated.append(rep_lbl)
+            ## Update
+            datum["labels"] = datum_labels_updated
     ## Format Metadata
     metadata = pd.DataFrame(metadata)
     ## Inferred Attribute Keys
@@ -675,17 +415,28 @@ def create_datasets(args):
             pass
         else:
             args.attribute_keys = list(filter(lambda i: not i.startswith("validity_") or i.split("validity_")[1].split("_")[0] in args.separate_validity, args.attribute_keys))
+    ## Filter Separate Entity
+    if args.separate_entity is not None:
+        ## Identify
+        attribute_entity_keys = set()
+        for instance in data:
+            for lbl in instance["labels"]:
+                attribute_entity_keys.update([i for i in lbl.keys() if i.startswith("entity_type=")])
+        attribute_entity_keys = sorted(attribute_entity_keys)
+        ## Initialize
+        if args.attribute_keys is None or args.attribute_keys == "default":
+            args.attribute_keys = []
+        ## Update
+        args.include_attribute = True
+        args.attribute_keys.extend(attribute_entity_keys)
     ## Negation
     if args.separate_negation is not None:
         for s in args.separate_negation:
             if f"negation_{s}" not in args.attribute_keys:
                 args.attribute_keys.append(f"negation_{s}")
-    ## Initialize Tokenizer
-    print("[Initializing Primary Tokenizer]")
-    base_tokenizer = AutoTokenizer.from_pretrained(args.tokenizer)
     ## Initialize Secondary Tokenizer
-    print("[Initializing Secondary Tokenizer]")
-    tokenizer = PostProcessTokenizer(tokenizer=base_tokenizer)
+    print("[Initializing Tokenizer]")
+    tokenizer = PostProcessTokenizer(tokenizer=AutoTokenizer.from_pretrained(args.tokenizer))
     ## Initialize Tagging Tokenizer
     print("[Initializing Tagging Tokenizer]")
     tagging_tokenizer = AttributeTaggingTokenizer(tokenizer.tokenize,
@@ -712,21 +463,6 @@ def create_datasets(args):
             preprocessed_data["document_id"].append(datum["document_id"])
             preprocessed_data["split"].append(datum["metadata"].get("split",None))
             preprocessed_data["text"].append(datum["text"])
-    
-    # ##NOTE: ADDED START Downsampling?
-    # tag_distribution = [[len(x), len(list(filter(lambda i: len(i[1]) > 0, x)))] for x in preprocessed_data["tags"]]
-    # tag_distribution_df = pd.DataFrame(tag_distribution, columns=["n_tokens","n_tagged_tokens"])
-    # print((tag_distribution_df["n_tagged_tokens"] > 0).value_counts(normalize=False).to_string())
-    # with_tag = [i for i, x in enumerate(tag_distribution) if x[1] > 0]
-    # without_tag = [i for i, x in enumerate(tag_distribution) if x[1] == 0]
-    # seed = np.random.RandomState(42)
-    # without_tag_ds = sorted(seed.choice(without_tag, len(with_tag) // 2, replace=False))
-    # # ds_mask = sorted(with_tag + without_tag_ds)
-    # ds_mask = with_tag
-    # for key in preprocessed_data.keys():
-    #     preprocessed_data[key] = [preprocessed_data[key][i] for i in ds_mask]
-    # ##NOTE: ADDED END
-
     ## Update User to Preprocessing Output
     print("[Preprocessing Complete. Started with {} Examples. Ended with {} Examples. {} Were Split]".format(len(data), len(preprocessed_data["tags"]), n_split))
     ## Token Distribution
@@ -759,6 +495,7 @@ def create_datasets(args):
                                                                       align_label_space=True)[0]
         ## For Attributes - Apply Either a Span or Document Limit for patients. E.g., Patient X can only contribute 2 spans per attribute.
         if args.limit_group is not None:
+            print("[Applying Attribute Label Limit (Downsampling)]")
             attribute_labels = apply_attribute_limit(attribute_encoders=attribute_encoders,
                                                      attribute_labels=attribute_labels,
                                                      document_groups=metadata.set_index("document_id").loc[preprocessed_data["document_id"]][args.limit_group].apply(tuple,axis=1).tolist(),
@@ -791,41 +528,47 @@ def create_datasets(args):
     ## Identify Train/Dev/Test Splits
     print("[Identifying Dataset Splits]")
     if args.eval_strategy == "k_fold":
-        splits = _sample_splits(preprocessed_data=preprocessed_data,
-                                data=data,
-                                metadata=metadata,
-                                eval_cv=args.eval_cv,
-                                eval_cv_groups=args.eval_cv_groups,
-                                random_state=args.random_state)
+        splits = sample_splits(split_method="k_fold",
+                               preprocessed_data=preprocessed_data,
+                               data=data,
+                               metadata=metadata,
+                               eval_cv=args.eval_cv,
+                               eval_cv_groups=args.eval_cv_groups,
+                               random_state=args.random_state)
     elif args.eval_strategy == "monte_carlo":
-        splits = _sample_splits_monte_carlo(preprocessed_data=preprocessed_data,
-                                            data=data,
-                                            metadata=metadata,
-                                            eval_cv=args.eval_cv,
-                                            eval_cv_groups=args.eval_cv_groups,
-                                            split_frac=args.eval_mc_split_frac,
-                                            random_state=args.random_state)
+        splits = sample_splits(split_method="monte_carlo",
+                               preprocessed_data=preprocessed_data,
+                               data=data,
+                               metadata=metadata,
+                               eval_cv=args.eval_cv,
+                               eval_cv_groups=args.eval_cv_groups,
+                               split_frac=args.eval_mc_split_frac,
+                               random_state=args.random_state)
     elif args.eval_strategy == "stratified_k_fold":
-        splits = _sample_splits_stratified(preprocessed_data=preprocessed_data,
-                                           data=data,
-                                           metadata=metadata,
-                                           eval_cv=args.eval_cv,
-                                           eval_cv_groups=args.eval_cv_groups,
-                                           max_sample_per_iter=None,
-                                           random_state=args.random_state)
+        splits = sample_splits(split_method="stratified_k_fold",
+                               preprocessed_data=preprocessed_data,
+                               data=data,
+                               metadata=metadata,
+                               eval_cv=args.eval_cv,
+                               eval_cv_groups=args.eval_cv_groups,
+                               max_sample_per_iter=None,
+                               random_state=args.random_state)
     elif args.eval_strategy == "stratified_monte_carlo":
-        splits = _sample_splits_stratified_monte_carlo(preprocessed_data=preprocessed_data,
-                                                       data=data,
-                                                       metadata=metadata,
-                                                       eval_cv=args.eval_cv,
-                                                       eval_cv_groups=args.eval_cv_groups,
-                                                       split_frac=args.eval_mc_split_frac,
-                                                       max_sample_per_iter=None,
-                                                       random_state=args.random_state)
+        splits = sample_splits(split_method="stratified_monte_carlo",
+                               preprocessed_data=preprocessed_data,
+                               data=data,
+                               metadata=metadata,
+                               eval_cv=args.eval_cv,
+                               eval_cv_groups=args.eval_cv_groups,
+                               split_frac=args.eval_mc_split_frac,
+                               max_sample_per_iter=None,
+                               random_state=args.random_state)
+    else:
+        raise NotImplementedError(f"Split strategy not recognized: '{args.eval_strategy}'")    
     ## Isolate Subset (If Desired)
     if args.eval_cv_fold is not None:
         splits = {x:splits[x] for x in args.eval_cv_fold}
-    ## Support Filter - No Entities, Exclude Examples Without Any Relevant Task Data
+    ## Support Filter for Attribute Classification - If No NER, Exclude Examples Without Any Relevant Positive Labels
     if not args.include_entity:
         ## Initialize Support Filter - At Least One Relevant Entity
         support_filter = [False for _ in preprocessed_data["tags"]]
@@ -870,74 +613,6 @@ def create_datasets(args):
     ## Return Datasets
     return datasets, tokenizer.get_vocab()
 
-def _initialize_model_warm_start(args,
-                                 fold,
-                                 model):
-    """
-    
-    """
-    ## Determine Init Path
-    init_path = f"{args.model_init}/" if args.model_init_ignore_fold else f"{args.model_init}/fold-{fold}/"
-    if not os.path.exists(init_path):
-        raise FileNotFoundError(f"Model warm start initialization not found: '{init_path}'")
-    ## Determine if Training Completed or Recent Checkpoint
-    if os.path.exists(f"{init_path}/model.pt"):
-        pass
-    elif os.path.exists(f"{init_path}/checkpoints/"):
-        checkpoint_dirs = glob(f"{init_path}/checkpoints/checkpoint-*/model.pt")
-        checkpoint_dirs = sorted(checkpoint_dirs, key=lambda x: int(x.split("/checkpoint-")[1].split("/")[0]))
-        if len(checkpoint_dirs) == 0:
-            raise FileNotFoundError(f"Model warm start initialization not found: '{init_path}")
-        init_path = os.path.dirname(checkpoint_dirs[-1]) + "/"
-    else:
-        FileNotFoundError(f"Model warm start initialization not found: '{init_path}'")
-    ## Find Desired Init Configuration
-    cur_back = ""
-    n_back = 0
-    while True:
-        ## Format Proposed Filename
-        model_init_cfg_file = f"{init_path}/{cur_back}/train.cfg.json"
-        ## Check for File
-        if not os.path.exists(model_init_cfg_file):
-            cur_back += "/../"
-        else:
-            model_init_cfg_file = os.path.abspath(model_init_cfg_file)
-            break
-        ## Update Recursion Directory Count
-        n_back += 1
-        if n_back > 10:
-            raise FileNotFoundError("Maximum recursion search for config file reached. Initialization may have been provided incorrectly.")
-    ## Load Init Configuration
-    with open(model_init_cfg_file,"r") as the_file:
-        model_init_config = json.load(the_file)
-    ## Load Current Script Configuration
-    fold_dir = f"{args.output_dir}/fold-{fold}/"
-    with open(f"{fold_dir}/train.cfg.json","r") as the_file:
-        current_config = json.load(the_file)
-    ## Identify Differences
-    config_keys = set(model_init_config.keys()) | set(current_config.keys())
-    config_differences = list(filter(lambda ck: model_init_config.get(ck,None) != current_config.get(ck, None), config_keys))
-    ## Ensure No Breaking Differences
-    broken = set(WARM_START_BREAKING_KEYS) & set(config_differences)
-    if broken:
-        if not args.model_init_reset_training:
-            raise ValueError(f"Cannot use warm start model initialization due to differences in parameters: {broken}")
-        else: ## Situtationally an issue, don't want to always raise errors
-            print("[WARNING: There are known differences in the configuration of the pretrained init model and the current model. These may cause issues.]")
-            print("[WARNING: Known differences: {}]".format(broken))
-    ## Load Pretrained Model Weights
-    model_state_dict = model.state_dict() ## Target Model State Dict
-    pretrained_state_dict = torch.load(f"{init_path}/model.pt", map_location=torch.device('cpu')) ## Pretrained Model State Dict
-    pretrained_state_dict = {k: v for k, v in pretrained_state_dict.items() if k in model_state_dict} ## Filter Out Irrelevant Keys
-    for prefix, prefix_breaking in SPECIFIC_WARM_START_BREAKING_KEYS.items():
-        if any(i in broken for i in prefix_breaking):
-            print(f"[WARNING {prefix} from warm start model appears to be incompatible. Removing from update.]")
-            pretrained_state_dict = {k:v for k, v in pretrained_state_dict.items() if not k.startswith(prefix)}
-    model_state_dict.update(pretrained_state_dict) ## Overwrite Model Dict Weights with Pretrained Weights
-    _ = model.load_state_dict(model_state_dict) ## Re-load Updated Model Dict
-    ## Return Initialized Model
-    return model, init_path
-    
 def initialize_model(args,
                      encoder_entity,
                      encoder_attributes,
@@ -948,7 +623,6 @@ def initialize_model(args,
     """
     ## Initialize Model Class
     print("[Creating Model Class]")
-    model_init = None
     model = NERTaggerModel(encoder_entity=encoder_entity,
                            encoder_attributes=encoder_attributes,
                            token_encoder=args.encoder,
@@ -969,17 +643,8 @@ def initialize_model(args,
                            attributes_hidden_size=args.attributes_hidden_size,
                            dropout=args.model_dropout_p,
                            random_state=args.random_state)
-    ## Warm-Start
-    if args.model_init is not None:
-        print("[Loading Model Warm Start]")
-        model, model_init = _initialize_model_warm_start(args=args,
-                                                         fold=fold,
-                                                         model=model)
-    ## Ensure Encoder is Frozen if Desired
-    if args.freeze_encoder:
-        _ = model._freeze_encoder()
     ## Return
-    return model, model_init
+    return model
     
 def extract_dataset_labels(dataset,
                            vocab2ind):
@@ -1071,7 +736,7 @@ def run_fold_train(args,
         else:
             print(">> Fold complete. Exiting.")
             return None
-    if os.path.exists(fold_output_dir) and not args.keep_existing and not args.no_training:
+    if os.path.exists(fold_output_dir) and not args.keep_existing:
         if args.rm_existing:
             _ = os.system(f"rm -rf {fold_output_dir}")
         else:
@@ -1104,11 +769,11 @@ def run_fold_train(args,
         return None
     ## Initialize Model
     print("[Initializing Primary Model]")
-    model, model_init = initialize_model(args=args,
-                                         encoder_entity=dataset["train"]._encoder_entity,
-                                         encoder_attributes=dataset["train"]._encoder_attributes,
-                                         vocab2ind=vocab2ind,
-                                         fold=fold)
+    model = initialize_model(args=args,
+                             encoder_entity=dataset["train"]._encoder_entity,
+                             encoder_attributes=dataset["train"]._encoder_attributes,
+                             vocab2ind=vocab2ind,
+                             fold=fold)
     ## Run Training Procedure
     print("[Starting Training Procedure for Primary Model]")
     training_logs, model = train(dataset=dataset,
@@ -1139,16 +804,20 @@ def run_fold_train(args,
                                  ## NOTE: ADDED END
                                  weighting_entity=args.weighting_entity,
                                  weighting_attribute=args.weighting_attribute,
+                                 weighting_entity_gamma=args.weighting_entity_gamma,
+                                 weighting_attribute_gamma=args.weighting_attribute_gamma,
+                                 use_crf_informed_prior=args.use_crf_informed_prior,
                                  use_first_index=args.attribute_use_first_index,
                                  early_stopping_tol=args.early_stopping_tol,
                                  early_stopping_patience=args.early_stopping_patience,
                                  early_stopping_warmup=args.early_stopping_warmup,
+                                 early_stopping_criteria=args.early_stopping_criteria,
                                  random_state=args.random_state,
                                  display_cumulative_batch_loss=args.display_batch_loss,
-                                 model_init=model_init if not args.model_init_reset_training else None,
+                                 model_init=None,
                                  checkpoint_dir=f"{fold_output_dir}/checkpoints/",
                                  gpu_id=args.gpu_id,
-                                 no_training=args.no_training,
+                                 no_training=False,
                                  ## NOTE: ADDED START
                                  eval_first_update=False
                                  ## NOTE: ADDED END
@@ -1162,81 +831,6 @@ def run_fold_train(args,
         _ = torch.save(model.state_dict(), f"{fold_output_dir}/model.pt")
     ## Done
     print(f"[Fold {fold} Complete]")
-
-def run_fold_evaluate(args,
-                      dataset,
-                      vocab2ind,
-                      fold):
-    """
-
-    """
-    ## Device
-    print("[Determining Device]")
-    device = get_device(args.gpu_id)
-    print(f">> WARNING: Using Following Device for Evaluation -- {device}")
-    ## Initialize Output Directory
-    print("[Initializing Output Directory]")
-    fold_output_dir = f"{args.output_dir}/fold-{fold}/predictions/"
-    if os.path.exists(fold_output_dir) and not args.rm_existing:
-        raise FileExistsError("Include --rm_existing flag to overwrite fold-predictions.")
-    if not os.path.exists(fold_output_dir):
-        _ = os.makedirs(fold_output_dir)
-    with open(f"{fold_output_dir}/evaluate.cfg.json","w") as the_file:
-        json.dump(vars(args), the_file, indent=1)
-    ## Initialize Model
-    print("[Initializing Model]")
-    model, model_init = initialize_model(args=args,
-                                         encoder_entity=dataset["train"]._encoder_entity,
-                                         encoder_attributes=dataset["train"]._encoder_attributes,
-                                         vocab2ind=vocab2ind,
-                                         fold=fold)
-    ## Check Init
-    print("[Validating Model Initialization]")
-    if model_init is None:
-        raise ValueError("Model should be trained already to run evaluation.")
-    ## Initialize Class Weights
-    print("[Initializing Class Weights]")
-    entity_weights, attribute_weights = initialize_class_weights(dataset=dataset["train"],
-                                                                 weighting_entity=args.weighting_entity,
-                                                                 weighting_attribute=args.weighting_attribute)
-    ## Iterate Through Splits
-    print("[Beginning Split Evaluation]")
-    for split in ["train","dev","test"]:
-        ## Ignore Test if Desired
-        if split == "test" and not args.eval_test:
-            continue
-        ## Run Prediction
-        output = eval.evaluate(model=model,
-                               dataset=dataset[split],
-                               batch_size=args.model_eval_batch_size,
-                               entity_weights=entity_weights,
-                               attribute_weights=attribute_weights,
-                               desc=split.title(),
-                               device=device,
-                               use_first_index=args.attribute_use_first_index,
-                               return_predictions=True)
-        ## Defaults
-        entity_predictions_fmt = None
-        attribute_predictions_fmt = None
-        ## Make Predictions
-        if output["valid"]["entity"]:
-            print("[Formatting Entity Predictions: {}]".format(split))
-            entity_predictions_fmt = eval.format_entity_predictions(entity_predictions=output["entity"]["predictions"],
-                                                                    dataset=dataset[split],
-                                                                    vocab2ind=vocab2ind)
-        if output["valid"]["attributes"]:
-            print("[Formatting Attribute Predictions: {}]".format(split))
-            attribute_predictions_fmt = eval.format_attribute_predictions(attribute_predictions=output["attributes"]["predictions"],
-                                                                          dataset=dataset[split],
-                                                                          vocab2ind=vocab2ind,
-                                                                          context_size=10)
-        ## Cache
-        if entity_predictions_fmt is not None:
-            print("[Caching Entity Predictions: {}]".format(split))
-            _ = entity_predictions_fmt.to_csv(f"{fold_output_dir}/entities.{split}.csv", index=False)
-        if attribute_predictions_fmt is not None:
-            print("[Caching Attribute Predictions: {}]".format(split))
-            _ = attribute_predictions_fmt.to_csv(f"{fold_output_dir}/attributes.{split}.csv", index=False)
 
 def main():
     """
@@ -1254,44 +848,24 @@ def main():
         try:
             _ = os.makedirs(args.output_dir)
         except FileExistsError as e:
-            print("[WARNING: Output directory already exists. This may be expected if running concurrent folds.]")
-    ## Check Existence
-    if args.eval_cv_fold is not None and not args.evaluate:
-        print("[Checking for Prior Completion]")
-        all_complete = True
-        for fold in args.eval_cv_fold:
-            fold_output_dir = f"{args.output_dir}/fold-{fold}/"
-            if os.path.exists(fold_output_dir) and args.keep_existing:
-                if not os.path.exists(f"{fold_output_dir}/train.log.pt"):
-                    all_complete = False
-                    print(f">> Found incomplete fold: {fold}")
-                else:
-                    pass
-            else:
-                all_complete = False
-        ## Early Exit
-        if all_complete:
-            print(">> All CV folds complete. Exiting early.")
-            print("[Script Complete]")
-            return None
+            print("[WARNING: Output directory already exists. This may be expected if running concurrent folds.]")    
+    ## Check for Early Exit
+    print("[Checking For Existing Results]")
+    if check_for_cv_completion(args):
+        print(">> All CV folds complete. Exiting early.")
+        print("[Script Complete]")
+        return None
     ## Create Dataset
     print("[Creating Datasets]")
     datasets, vocab2ind = create_datasets(args)
     ## Run Procedures
     print("[Beginning Script Procedures]")
     for f, (fold, fold_dataset) in enumerate(datasets.items()):
-        if args.evaluate:
-            print("[Beginning Evaluation Fold {} ({}/{})]".format(fold, f+1, len(datasets)))
-            _ = run_fold_evaluate(args=args,
-                                  dataset=fold_dataset,
-                                  vocab2ind=vocab2ind,
-                                  fold=fold)
-        else:
-            print("[Beginning Training Fold {} ({}/{})]".format(fold, f+1, len(datasets)))
-            _ = run_fold_train(args=args,
-                               dataset=fold_dataset,
-                               vocab2ind=vocab2ind,
-                               fold=fold)
+        print("[Beginning Training Fold {} ({}/{})]".format(fold, f+1, len(datasets)))
+        _ = run_fold_train(args=args,
+                           dataset=fold_dataset,
+                           vocab2ind=vocab2ind,
+                           fold=fold)
     ## Done
     print("[Script Complete]")
 

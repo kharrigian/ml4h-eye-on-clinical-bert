@@ -8,6 +8,10 @@ before full number of epochs complete.
 ### Imports
 #########################
 
+## Filtering
+import warnings
+warnings.simplefilter(action='ignore', category=FutureWarning)
+
 ## Standard Library
 import os
 import json
@@ -35,7 +39,7 @@ def parse_command_line():
     parser = argparse.ArgumentParser()
     _ = parser.add_argument("--results_dir", type=str, default=None, help="Path to --output_dir from training run.")
     _ = parser.add_argument("--log_files", type=str, default=None, nargs="+", help="If desired, provide log files directory.")
-    _ = parser.add_argument("--eval_strategy", type=str, default=None, choices={"epoch","steps"})
+    _ = parser.add_argument("--eval_strategy", type=str, default=None, choices={"epochs","steps"})
     _ = parser.add_argument("--model", type=str, choices={"model","baseline-task","baseline-entity","baseline-token"})
     _ = parser.add_argument("--output_dir", type=str, default=None, help="Where to store aggregate results/visualizations.")
     _ = parser.add_argument("--dpi", type=int, default=100, help="Pixel density for saving PNG files.")
@@ -55,6 +59,8 @@ def parse_command_line():
         raise FileExistsError("Must include --rm_existing flag to overwrite an existing output directory.")
     if args.eval_strategy is None:
         raise ValueError("Must specify the expected --eval_strategy for aggregating curves.")
+    if args.eval_strategy == "epochs":
+        args.eval_strategy = "epoch"
     ## Return
     return args
 
@@ -1038,6 +1044,16 @@ def plot_performance_snapshot_by_entity(attribute,
     ## Generate Plot with Proxy Data
     return plot_performance_snapshot("last", split_plot, split_criteria, None, proxy_attributes_cache, folds, eval_strategy, plot)
 
+def format_checkpoint_score(x):
+    """
+
+    """
+    if not isinstance(x, dict):
+        return x
+    assert "thresholds" in x
+    x["thresholds"] = list(map(lambda i: 1 if i == np.inf else i, x["thresholds"]))
+    return x
+
 def main():
     """
 
@@ -1156,8 +1172,8 @@ def main():
             ## Cache Checkpoint Scores (Raw)
             if checkpoints_with_scores is not None:
                 checkpoints_with_scores = checkpoints_with_scores.dropna(subset=["score"])
-                with open(f"{args.output_dir}/optimal-scores.{split}.{index_str}.json","w") as the_file:
-                    the_file.write(checkpoints_with_scores.to_json(orient="index"))
+                checkpoints_with_scores["score"] = checkpoints_with_scores["score"].map(lambda i: format_checkpoint_score(i))
+                checkpoints_with_scores.to_json(f"{args.output_dir}/optimal-scores.{split}.{index_str}.json", orient="index")
             ## Visualize Snapshot Entity Breakdown
             if attributes_cache is not None:
                 ## Iterate Through Attributes
@@ -1183,9 +1199,9 @@ def main():
                     ## Score Breakdown
                     if checkpoints_with_scores_by_entity is not None:
                         checkpoints_with_scores_by_entity = checkpoints_with_scores_by_entity.dropna(subset=["score"])
-                        with open(f"{args.output_dir}/optimal-scores-by-entity.{split}.{index_str}.{attr}.json","w") as the_file:
-                            the_file.write(checkpoints_with_scores_by_entity.to_json(orient="index"))
-                    
+                        checkpoints_with_scores_by_entity["score"] = checkpoints_with_scores_by_entity["score"].map(lambda i: format_checkpoint_score(i))
+                        checkpoints_with_scores_by_entity.to_json(f"{args.output_dir}/optimal-scores-by-entity.{split}.{index_str}.{attr}.json", orient="index")
+
     ## Done
     print("[Script Complete]")
 
