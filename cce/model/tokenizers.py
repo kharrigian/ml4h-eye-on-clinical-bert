@@ -97,7 +97,7 @@ class AttributeTaggingTokenizer(object):
         ## Sort Boundaries and Labels
         text_span_boundaries = sorted(text_spans.keys())
         label_span_boundaries = sorted(label_spans.keys())
-        ## Make Label Assignments to Each Text Spa
+        ## Make Label Assignments to Each Text Span
         i = 0
         j_bound = 0
         assignments = []
@@ -176,47 +176,53 @@ class AttributeTaggingTokenizer(object):
         """
         
         """
-        ## Initialize Split
+        ## Base Case (Sequence is Shorted Than max_length, Doesn't Need to Be Split)
+        if max_length >= len(tokens_and_labels):
+            return [tokens_and_labels]
+        ## Get Entity Boundaries
+        entity_boundaries = {}
+        for i, (tok, tok_lbls) in enumerate(tokens_and_labels):
+            for (tl, _, _) in tok_lbls:
+                tl_key = (tl["label"], tl["start"], tl["end"])
+                if tl_key not in entity_boundaries:
+                    entity_boundaries[tl_key] = []
+                entity_boundaries[tl_key].append(i)
+        ## Check That All Entities are Smaller than Max Length
+        for entity, entity_bounds in entity_boundaries.items():
+            if len(entity_bounds) > max_length:
+                raise Exception("Found an entity of length longer than max_length")
+        ## Indices Which Can't Be Used for Start or End of a Boundary
+        entity_boundaries_offlimit = set(flatten([y[1:] for x, y in entity_boundaries.items()]))
+        ## Initialize Cache
         split_tokens_and_labels = []
-        ## Initialize Indices
+        split_tokens_and_labels_boundaries = []
+        ## Initialize Proposed Boundaries
         cur_split_start = 0
         cur_split_end = max_length
-        ## Token Labels Helper
-        get_token_labels = lambda tok: [(i["label"],i["start"],i["end"]) for i, _, _ in tok[1]]
         ## Add Until Done
         while True:
-            ## Ensure Splits Preserve Entity Groups
-            if cur_split_end < len(tokens_and_labels):
-                ## Move End Back As Necessary
-                while True:
-                    ## Proposed End Token and Next Start Token
-                    token_boundary = tokens_and_labels[cur_split_end-1]
-                    token_boundary_next = tokens_and_labels[cur_split_end]
-                    ## Get Boundary Labels
-                    token_boundary_lbls = get_token_labels(token_boundary)
-                    token_boundary_next_lbls = get_token_labels(token_boundary_next)
-                    ## Check for Overlap
-                    if len(set(token_boundary_lbls) & set(token_boundary_next_lbls)) > 0:
-                        cur_split_end -= 1
-                        ## Check for Error
-                        if cur_split_start == cur_split_end:
-                            raise ValueError("Encountered error segmenting tokens while preserving label groups.")
-                    else:
-                        break
-            ## Add Sequence of Max Length
+            ## Update Proposed End (Move Back as Needed)
+            while cur_split_end in entity_boundaries_offlimit:
+                cur_split_end = cur_split_end - 1
+            ## Update Proposed Start (Move Forward as Needed)
+            nxt_split_start = cur_split_end - sequence_overlap
+            while nxt_split_start < cur_split_end and nxt_split_start in entity_boundaries_offlimit:
+                nxt_split_start = nxt_split_start + 1
+            ## Cache
             split_tokens_and_labels.append(tokens_and_labels[cur_split_start:cur_split_end])
-            ## Check Completion
+            split_tokens_and_labels_boundaries.append((cur_split_start, cur_split_end))
+            ## Check for Completion
             if cur_split_end >= len(tokens_and_labels):
                 break
-            ## Update Sequence Boundaries
-            cur_split_start = cur_split_end - sequence_overlap
-            cur_split_end = cur_split_start + max_length
+            ## Update Bounds
+            cur_split_start = nxt_split_start
+            cur_split_end = min(nxt_split_start + max_length, len(tokens_and_labels))
         ## Validate Boundaries
         assert tokens_and_labels[0] == split_tokens_and_labels[0][0]
         assert tokens_and_labels[-1] == split_tokens_and_labels[-1][-1]
         ## Return
         return split_tokens_and_labels
-    
+
     def _add_special_tokens(self,
                             tokens_and_labels,
                             cls_token,

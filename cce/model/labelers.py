@@ -351,31 +351,49 @@ class LabelEncoder(object):
         """
         
         """
-        ## Base Case (All Zeros)
-        if sum(array) == 0:
-            return []
-        ## Look for Spans
+        ## Type Check
+        if isinstance(array, list):
+            array = np.array(array)
+        ## Find Span Starts
+        span_starts = (array % 2 == 1).nonzero()
+        if not isinstance(array, torch.Tensor):
+            span_starts = span_starts[0]
+        ## Format
+        span_starts = [int(i) for i in span_starts]
+        ## Find Span Ends
         spans = []
-        cur_label = None
-        cur_span_start = None
-        for i, a in enumerate(array):
-            if a == 0:
-                if cur_span_start is not None:
-                    spans.append((cur_label, (cur_span_start, i)))
-                    cur_span_start = None
-                    cur_label = None
-                continue
-            if a % 2 == 1: ## Start of New Span
-                if cur_span_start is not None:
-                    spans.append((cur_label, (cur_span_start, i)))
-                cur_span_start = i
-                cur_label = a
-            elif a % 2 == 0: ## Continuation of Span
-                if cur_label is None or a - cur_label != 1: ## Invalid Span (Ignore)
-                    continue
-        if cur_span_start is not None:
-            spans.append((cur_label, (cur_span_start, i + 1)))
+        for span_start in span_starts:
+            i_ahead = 1
+            while (span_start + i_ahead) < len(array) and array[span_start + i_ahead] != 0 and array[span_start + i_ahead] % 2 == 0:
+                i_ahead += 1
+            spans.append((array[span_start], (span_start, span_start+i_ahead)))
+        ## Return
         return spans
+        # ## Base Case (All Zeros)
+        # if sum(array) == 0:
+        #     return []
+        # ## Look for Spans
+        # spans = []
+        # cur_label = None
+        # cur_span_start = None
+        # for i, a in enumerate(array):
+        #     if a == 0:
+        #         if cur_span_start is not None:
+        #             spans.append((cur_label, (cur_span_start, i)))
+        #             cur_span_start = None
+        #             cur_label = None
+        #         continue
+        #     if a % 2 == 1: ## Start of New Span
+        #         if cur_span_start is not None:
+        #             spans.append((cur_label, (cur_span_start, i)))
+        #         cur_span_start = i
+        #         cur_label = a
+        #     elif a % 2 == 0: ## Continuation of Span
+        #         if cur_label is None or a - cur_label != 1: ## Invalid Span (Ignore)
+        #             continue
+        # if cur_span_start is not None:
+        #     spans.append((cur_label, (cur_span_start, i + 1)))
+        # return spans
 
     def _extract_spans(self,
                        arrays):

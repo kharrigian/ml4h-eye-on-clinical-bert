@@ -193,8 +193,15 @@ def _evaluate_batch(batch_inds,
     """
 
     """
+    ## Status
+    include_entity = True
+    include_attributes = True
+    if dataset._encoder_entity is None or (hasattr(model, "_run_entity") and not model._run_entity):
+        include_entity = False
+    if dataset._encoder_attributes is None or (hasattr(model, "_run_attributes") and not model._run_attributes):
+        include_attributes = False
     ## Entity Classes
-    entity_classes = model.get_entities() if dataset._encoder_entity is not None else None
+    entity_classes = model.get_entities() if include_entity else None
     ## Collate
     batch = collate_entity_attribute([dataset[idx] for idx in batch_inds],
                                      use_first_index=use_first_index)
@@ -203,12 +210,12 @@ def _evaluate_batch(batch_inds,
     ## Forward Pass
     batch_entity_logits, batch_attribute_logits = model(batch)
     ## Decoding
-    if dataset._encoder_entity is not None:
+    if include_entity:
         batch_entity_tags = model.decode_entity(batch,
                                                 batch_entity_logits)
     ## Update Entity Loss
     batch_entity_loss = None
-    if dataset._encoder_entity is not None:
+    if include_entity:
         batch_entity_loss = compute_entity_loss(model=model,
                                                 entity_weights=entity_weights,
                                                 entity_logits=batch_entity_logits,
@@ -217,7 +224,7 @@ def _evaluate_batch(batch_inds,
         batch_entity_loss = batch_entity_loss.data.item()
     ## Update Attribute Loss
     batch_attribute_loss = {}
-    if dataset._encoder_attributes is not None:
+    if include_attributes:
         batch_attribute_loss = compute_attribute_loss(model=model,
                                                       attribute_weights=attribute_weights,
                                                       attribute_logits=batch_attribute_logits,
@@ -227,18 +234,18 @@ def _evaluate_batch(batch_inds,
         # batch_attribute_loss = {x:y.data.item() for x, y in zip(model.get_attributes(), batch_attribute_loss) if isinstance(y, torch.Tensor)}
     ## Move Outputs Back to CPU for Score Computations
     batch = move_batch_to_device(batch, "cpu")
-    if dataset._encoder_entity is not None:
+    if include_entity:
         batch_entity_tags = batch_entity_tags.to("cpu")
-    if dataset._encoder_attributes is not None:
+    if include_attributes:
         batch_attribute_logits = list(map(lambda bal: bal.to("cpu") if isinstance(bal, torch.Tensor) else None, batch_attribute_logits))
     ## Store Masked Entity Tags/Labels (If Applicable)
     batch_entity_predictions = []
     batch_ent_true, batch_ent_pred = [], []
-    if dataset._encoder_entity is not None:
+    if include_entity:
         ## Flatten Entity Tags/Labels
         token_attention_mask = (batch["attention_mask"]==1).ravel()
-        token_entity_labels = [batch["entity_labels"][:,i,:].ravel() for i in range(batch["entity_labels"].size(1))] if dataset._encoder_entity is not None else None
-        token_entity_predictions = [batch_entity_tags[:,i,:].ravel() for i in range(batch_entity_tags.size(1))] if dataset._encoder_entity is not None else None
+        token_entity_labels = [batch["entity_labels"][:,i,:].ravel() for i in range(batch["entity_labels"].size(1))] if include_entity else None
+        token_entity_predictions = [batch_entity_tags[:,i,:].ravel() for i in range(batch_entity_tags.size(1))] if include_entity else None
         ## Store with Attention Mask
         for i, (pred, lbl) in enumerate(zip(token_entity_predictions, token_entity_labels)):
             batch_entity_predictions.append(torch.stack([pred[token_attention_mask], lbl[token_attention_mask]]).T)
@@ -247,7 +254,7 @@ def _evaluate_batch(batch_inds,
         batch_ent_pred = [flatten([[(entity_classes[e], i[1]) for i in ent_tags] for e, ent_tags in enumerate(dataset._encoder_entity._extract_spans(tags[:,batch["attention_mask"][tt] == 1]))]) for tt, tags in enumerate(batch_entity_tags)]
     ## Store Attribute Predictions
     batch_attribute_predictions = {}
-    if dataset._encoder_attributes is not None:
+    if include_attributes:
         for attr, attr_logits in zip(model.get_attributes(), batch_attribute_logits):
             if attr_logits is None:
                 continue
@@ -489,18 +496,25 @@ def evaluate(model,
     """
     
     """
+    ## Status
+    include_entity = True
+    include_attributes = True
+    if dataset._encoder_entity is None or (hasattr(model, "_run_entity") and not model._run_entity):
+        include_entity = False
+    if dataset._encoder_attributes is None or (hasattr(model, "_run_attributes") and not model._run_attributes):
+        include_attributes = False 
     ## Meta
-    entity_classes = model.get_entities() if dataset._encoder_entity is not None else None
-    n_entity_classes = len(entity_classes) if dataset._encoder_entity is not None else None
+    entity_classes = model.get_entities() if include_entity else None
+    n_entity_classes = len(entity_classes) if include_entity else None
     ## Prediction Cache
-    entity_loss = 0 if dataset._encoder_entity is not None else None
-    entity_predictions = [[] for _ in range(n_entity_classes)] if dataset._encoder_entity is not None else None
-    attribute_loss = {at:0 for at in model.get_attributes()} if dataset._encoder_attributes is not None else None
-    attribute_loss_by_entity = {at:torch.zeros((len(dataset._encoder_attributes[at].get_tasks()), 2)) for at in model.get_attributes()} if dataset._encoder_attributes is not None else None
-    attribute_predictions = {at:[] for at in model.get_attributes()} if dataset._encoder_attributes is not None else None
+    entity_loss = 0 if include_entity else None
+    entity_predictions = [[] for _ in range(n_entity_classes)] if include_entity else None
+    attribute_loss = {at:0 for at in model.get_attributes()} if include_attributes else None
+    attribute_loss_by_entity = {at:torch.zeros((len(dataset._encoder_attributes[at].get_tasks()), 2)) for at in model.get_attributes()} if include_attributes else None
+    attribute_predictions = {at:[] for at in model.get_attributes()} if include_attributes else None
     entity_spans = [[], []]
-    n_batches_ent = 0 if dataset._encoder_entity is not None else None
-    n_instances_att = {x:0 for x in attribute_loss.keys()} if dataset._encoder_attributes is not None else None
+    n_batches_ent = 0 if include_entity else None
+    n_instances_att = {x:0 for x in attribute_loss.keys()} if include_attributes else None
     ## Batches
     eval_batches = list(chunks(list(range(len(dataset))), batch_size))
     ## Iterate Through Batches
@@ -519,14 +533,14 @@ def evaluate(model,
                                                                                                                                                                  attribute_weights=None,
                                                                                                                                                                  device=device,
                                                                                                                                                                  use_first_index=use_first_index)
-                if dataset._encoder_entity is not None:
+                if include_entity:
                     entity_loss += batch_entity_loss
                     n_batches_ent += 1
                     for e, ent_preds in enumerate(batch_entity_predictions):
                         entity_predictions[e].append(ent_preds)
                     entity_spans[0].extend(batch_ent_true)
                     entity_spans[1].extend(batch_ent_pred)
-                if dataset._encoder_attributes is not None:
+                if include_attributes:
                     for attr, attr_loss in batch_attribute_loss.items():
                         attr_loss_m = attr_loss[:,0] * attr_loss[:,1]
                         attribute_loss[attr] += torch.nansum(attr_loss_m).item()                      
@@ -539,9 +553,9 @@ def evaluate(model,
             except Exception as e:
                 raise e
     ## Average The Loss Over Batches
-    if dataset._encoder_entity is not None:
+    if include_entity:
         entity_loss = entity_loss / n_batches_ent
-    if dataset._encoder_attributes is not None:
+    if include_attributes:
         for x, y in attribute_loss.items():
             attribute_loss[x] = (y / n_instances_att[x]) if n_instances_att[x] > 0 else np.nan        
         for x, y in attribute_loss_by_entity.items():
@@ -551,11 +565,11 @@ def evaluate(model,
                 attribute_loss_by_entity[x][ent] = {"loss":y_avg[e], "support":int(y[e,1].item())}
     ## Format
     stack_preds = lambda x: torch.vstack(x) if len(x) > 0 else None
-    entity_predictions = [stack_preds(preds) for preds in entity_predictions] if dataset._encoder_entity is not None else None
-    attribute_predictions = {at:stack_preds(preds) for at, preds in attribute_predictions.items()} if dataset._encoder_attributes is not None else None
+    entity_predictions = [stack_preds(preds) for preds in entity_predictions] if include_entity else None
+    attribute_predictions = {at:stack_preds(preds) for at, preds in attribute_predictions.items()} if include_attributes else None
     ## Scoring (Entities)
     entity_scores, entity_level_scores, entity_level_scores_per_lbl = None, None, None
-    if dataset._encoder_entity is not None:
+    if include_entity:
         ## Entity-Level
         entity_level_scores, entity_level_scores_per_lbl = evaluate_ner_entity(entity_true=entity_spans[0],
                                                                                entity_pred=entity_spans[1],
@@ -665,25 +679,26 @@ def evaluate(model,
                     attribute_scores[at] = ent_score_dict
                 else:
                     attribute_scores_per_entity[at][ent_type] = ent_score_dict
+    _format_att_pred = lambda y: [list(i) for i in y.detach().numpy()] if y is not None else None
     ## Format For Output
     output = {
         "entity":{
             "scores_token":entity_scores,
             "scores_entity":entity_level_scores,
             "scores_entity_per_label":entity_level_scores_per_lbl,
-            "loss":entity_loss if dataset._encoder_entity is not None else None,
-            "predictions":entity_spans_formatted if return_predictions and dataset._encoder_entity is not None else None
+            "loss":entity_loss if include_entity else None,
+            "predictions":entity_spans_formatted if return_predictions and include_entity else None
          },
         "attributes":{
             "scores":attribute_scores,
             "scores_per_entity":attribute_scores_per_entity,
-            "loss":attribute_loss if dataset._encoder_attributes is not None else None,
-            "loss_per_entity":attribute_loss_by_entity if dataset._encoder_attributes is not None else None,
-            "predictions":{x:[list(i) for i in y.detach().numpy()] for x, y in attribute_predictions.items()} if return_predictions and dataset._encoder_attributes is not None else None
+            "loss":attribute_loss if include_attributes else None,
+            "loss_per_entity":attribute_loss_by_entity if include_attributes else None,
+            "predictions":{x:_format_att_pred(y) for x, y in attribute_predictions.items()} if return_predictions and include_attributes else None
          },
          "valid":{
-            "entity":dataset._encoder_entity is not None,
-            "attributes":dataset._encoder_attributes is not None,
+            "entity":include_entity,
+            "attributes":include_attributes,
             }
     }
     ## Return to Model Training
@@ -694,19 +709,21 @@ def display_evaluation(scores):
     """
     
     """
+    ## Initialize Output String
+    out_str = []
     ## Entity
     if scores["valid"]["entity"]:
         ## Entity-level
-        print("~~~~~~~~~~~~~~~~~~ Entity Recognition (Entity-Level) ~~~~~~~~~~~~~~~~~~")
-        print("Overall:\n", pd.DataFrame(scores["entity"]["scores_entity"]).applymap(lambda i: "{:.3f}".format(i)).to_string())
+        out_str.append("~~~~~~~~~~~~~~~~~~ Entity Recognition (Entity-Level) ~~~~~~~~~~~~~~~~~~")
+        out_str.append("Overall:\n" + pd.DataFrame(scores["entity"]["scores_entity"]).applymap(lambda i: "{:.3f}".format(i)).to_string())
         for lbl, lbl_scores in scores["entity"]["scores_entity_per_label"].items():
-            print(f"{lbl}:\n", pd.DataFrame(lbl_scores).applymap(lambda i: "{:.3f}".format(i)).to_string())
+            out_str.append(f"{lbl}:\n" + pd.DataFrame(lbl_scores).applymap(lambda i: "{:.3f}".format(i)).to_string())
         ## Entity - Token-level
-        print("~~~~~~~~~~~~~~~~~~ Entity Recognition (Token-Level) ~~~~~~~~~~~~~~~~~~")
-        print("Average Loss: {:.4f}".format(scores["entity"]["loss"]))
+        out_str.append("~~~~~~~~~~~~~~~~~~ Entity Recognition (Token-Level) ~~~~~~~~~~~~~~~~~~")
+        out_str.append("Average Loss: {:.4f}".format(scores["entity"]["loss"]))
         for score_type in ["macro avg", "weighted avg"]:
             scores_ = pd.DataFrame({x:y[score_type] for x, y in scores["entity"]["scores_token"].items()}).T
-            print(f"{score_type}:\n", scores_.to_string())
+            out_str.append(f"{score_type}:\n" + scores_.to_string())
     ## Attributes
     if scores["valid"]["attributes"]:
         for at in scores["attributes"]["loss"].keys():
@@ -717,6 +734,12 @@ def display_evaluation(scores):
                 else:
                     at_scores[x] = y
             at_loss = scores["attributes"]["loss"][at]
-            print(f"~~~~~~~~~~~~~~~~~~ Attribute Classification ['{at}'] ~~~~~~~~~~~~~~~~~~")
-            print("Average Loss: {:.4f}".format(at_loss))
-            print("Scores:\n", pd.DataFrame(at_scores).T.to_string())
+            out_str.append(f"~~~~~~~~~~~~~~~~~~ Attribute Classification ['{at}'] ~~~~~~~~~~~~~~~~~~")
+            out_str.append("Average Loss: {:.4f}".format(at_loss))
+            out_str.append("Scores:\n" + pd.DataFrame(at_scores).T.to_string())
+    ## Format
+    out_str = "\n".join(out_str)
+    ## Print
+    print(out_str)
+    ## Return
+    return out_str

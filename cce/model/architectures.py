@@ -19,7 +19,6 @@ from transformers import AutoModel
 
 ## BERT Dimensions
 MAX_BERT_LENGTH = 512
-BERT_HIDDEN_DIM = 768
 
 ## Repository Root
 _ROOT = os.path.abspath(os.path.dirname(__file__) + "/../../")
@@ -28,6 +27,25 @@ _ROOT = os.path.abspath(os.path.dirname(__file__) + "/../../")
 ### Classes
 #######################
 
+class Parallel(torch.nn.Module):
+
+    """
+
+    """
+
+    def __init__(self, module_list):
+        """
+
+        """
+        super().__init__()
+        self.parallel_modules = module_list
+
+    def forward(self, x):
+        """
+
+        """
+        return [module(x) for module in self.parallel_modules]
+    
 class MLP(torch.nn.Module):
     
     """
@@ -55,15 +73,19 @@ class MLP(torch.nn.Module):
                                               out_features=out_dim,
                                               bias=True)
         else:
-            self.classifier = torch.nn.Sequential(
-                torch.nn.Linear(in_features=in_dim,
-                                out_features=hidden_dim,
-                                bias=True),
-                torch.nn.ReLU(),
-                torch.nn.Linear(in_features=hidden_dim,
-                                out_features=out_dim,
-                                bias=True)
-            )
+            ## Format as a List
+            if not isinstance(hidden_dim, list):
+                hidden_dim = [hidden_dim]
+            ## Create Layer Order
+            hidden_dim = [in_dim] + hidden_dim + [out_dim]
+            ## Create Input/Output Dimensions
+            mlp_layers = []
+            for ii, (idim, odim) in enumerate(zip(hidden_dim[:-1], hidden_dim[1:])):
+                mlp_layers.append(torch.nn.Linear(in_features=idim, out_features=odim, bias=True))
+                if ii != len(hidden_dim) - 2:
+                    mlp_layers.append(torch.nn.ReLU())
+            ## Make PyTorch Module
+            self.classifier = torch.nn.Sequential(*mlp_layers)
         
     def forward(self, X):
         """
@@ -98,7 +120,9 @@ class NERTaggerModel(torch.nn.Module):
                  entity_hidden_size=None,
                  entity_token_bias_type="uniform",
                  attributes_hidden_size=None,
-                 random_state=None):
+                 random_state=None,
+                 run_entity=True,
+                 run_attributes=True):
         """
         
         """
@@ -137,6 +161,8 @@ class NERTaggerModel(torch.nn.Module):
         self._entity_hidden_size = entity_hidden_size
         self._entity_token_bias_type = entity_token_bias_type
         self._attributes_hidden_size = attributes_hidden_size
+        self._run_entity = run_entity
+        self._run_attributes = run_attributes
         ## Initialize Token-level Encoder
         self.encoder = AutoModel.from_pretrained(token_encoder,
                                                  max_position_embeddings=self._max_sequence_length,
@@ -170,10 +196,12 @@ class NERTaggerModel(torch.nn.Module):
                 self.entity_heads.append(MLP(in_dim=ent_encoding_dim,
                                              out_dim=3,
                                              hidden_dim=self._entity_hidden_size,
-                                             random_state=self._random_state))
+                                             random_state=self._random_state+e))
                 if self._use_crf:
                     self.entity_crf.append(CRF(num_tags=3,
                                                batch_first=True))
+            ## Parallel Execution of Entity Heads
+            self.entity_heads = Parallel(self.entity_heads)
         ## Initialize Attribute Classification Heads (If Relevant)
         if self._encoder_attributes is not None:
             self.attribute_heads = torch.nn.ModuleList()
@@ -205,6 +233,11 @@ class NERTaggerModel(torch.nn.Module):
         ## Check Input
         if overlap is not None and overlap != 0 and overlap_type not in ["mean","first","last"]:
             raise KeyError("overlap_type not recognized.")
+        ## Base Case: No Splitting Neccessary
+        if n_tokens <= max_sequence_length:
+            input_splits = [np.arange(n_tokens)]
+            input_splits_weights = [np.ones(n_tokens, dtype=float)]
+            return input_splits, input_splits_weights
         ## Overlap
         overlap = 0 if overlap is None else overlap
         ## Range
@@ -308,25 +341,31 @@ class NERTaggerModel(torch.nn.Module):
         """
 
         """
-        ## Get Splits
-        input_splits, input_splits_weights = self._get_sequence_splits(n_tokens=inputs["input_ids"].size(1),
-                                                                       max_sequence_length=self._max_sequence_length,
-                                                                       overlap=self._sequence_overlap,
-                                                                       overlap_type=self._sequence_overlap_type) 
-        ## Build Token Encoding
-        encoding = torch.zeros((inputs["input_ids"].size(0), inputs["input_ids"].size(1), self._token_encoder_dim)).to(inputs["input_ids"].device)
-        for ind_split, ind_weight in zip(input_splits, input_splits_weights):
-            ## Extract Subset of Encodings
-            if self._token_encoder.startswith("random") or self._token_encoder.startswith("pretrained"):
-                ind_enc = self.encoder(inputs["input_ids"][:,ind_split])
-            else:
+        ## Identify Input Size
+        input_size = inputs["input_ids"].size(1)
+        ## Base Case: No Splitting Needed
+        if input_size <= self._max_sequence_length:
+            ## Pass Through Encoder
+            encoding = self.encoder(input_ids=inputs["input_ids"],
+                                    token_type_ids=inputs["token_type_ids"],
+                                    attention_mask=inputs["attention_mask"]).last_hidden_state
+        else:
+            ## Get Splits
+            input_splits, input_splits_weights = self._get_sequence_splits(n_tokens=input_size,
+                                                                           max_sequence_length=self._max_sequence_length,
+                                                                           overlap=self._sequence_overlap,
+                                                                           overlap_type=self._sequence_overlap_type) 
+            ## Build Token Encoding for Each Part
+            encoding = torch.zeros((inputs["input_ids"].size(0), input_size, self._token_encoder_dim)).to(inputs["input_ids"].device)
+            for ind_split, ind_weight in zip(input_splits, input_splits_weights):
+                ## Extract Subset of Encodings
                 ind_enc = self.encoder(input_ids=inputs["input_ids"][:,ind_split],
                                        token_type_ids=inputs["token_type_ids"][:,ind_split],
                                        attention_mask=inputs["attention_mask"][:,ind_split]).last_hidden_state
-            ## Apply Appropriate Weighting
-            ind_weight_t = torch.tensor([ind_weight for _ in range(ind_enc.size(0))]).unsqueeze(2).to(ind_enc.device)
-            ## Add Weighted Subset to Full Encoding
-            encoding[:,ind_split] = encoding[:,ind_split] + (ind_weight_t * ind_enc)
+                ## Apply Appropriate Weighting
+                ind_weight_t = torch.tensor([ind_weight for _ in range(ind_enc.size(0))]).unsqueeze(2).float().to(ind_enc.device)
+                ## Add Weighted Subset to Full Encoding
+                encoding[:,ind_split] = encoding[:,ind_split] + (ind_weight_t * ind_enc)
         ## Apply LSTM (To 'combine' separate subsets)
         if self._use_lstm:
             encoding = self.combiner(encoding)
@@ -343,27 +382,28 @@ class NERTaggerModel(torch.nn.Module):
         ## Check
         if self._encoder_entity is None:
             raise ValueError("Decoding not relevant without entities in the model.")
-        ## Initialize Cache
-        all_entity_tags = []
-        ## Iterate Through Entities
-        for l, ent_logits in enumerate(logits):
-            ## Case 0: No CRF
-            if not self._use_crf:
-                ## Decode (Argmax)
-                entity_tags = ent_logits.argmax(2)
-            ## Case 1: CRF
-            else:
+        ## Base Case: No CRF
+        if not self._use_crf:
+            return logits.argmax(axis=3).permute(1, 0, 2)
+        ## Alternative Case: CRF
+        else:
+            ## Padding Mask
+            input_mask = inputs["attention_mask"]==1
+            ## Initialize Cache
+            all_entity_tags = []
+            ## Iterate Through Entities
+            for l, ent_logits in enumerate(logits):
                 ## Decode
                 entity_tags = self.entity_crf[l].decode(emissions=ent_logits,
-                                                        mask=inputs["attention_mask"]==1)
+                                                        mask=input_mask)
                 ## Pad
                 entity_tags = torch.stack([torch.nn.functional.pad(torch.tensor(t), (0, ent_logits.size(1)-len(t)), "constant", 0) for t in entity_tags])
-            ## Cache
-            all_entity_tags.append(entity_tags)
-        ## Stack
-        all_entity_tags = torch.stack(all_entity_tags).permute(1,0,2)
-        ## Return
-        return all_entity_tags
+                ## Cache
+                all_entity_tags.append(entity_tags)
+            ## Stack
+            all_entity_tags = torch.stack(all_entity_tags).permute(1,0,2)
+            ## Return
+            return all_entity_tags
 
     def forward_entity(self,
                        inputs,
@@ -371,6 +411,9 @@ class NERTaggerModel(torch.nn.Module):
         """
 
         """
+        ## Check
+        if hasattr(self, "_run_entity") and not self._run_entity:
+            return None
         ## Initialize Defaults
         all_entity_logits = None
         ## Concatenate Token-Entity Biases
@@ -390,16 +433,8 @@ class NERTaggerModel(torch.nn.Module):
         ent_in = self.dropout(ent_in)
         ## Apply If Relevant
         if self._encoder_entity is not None:
-            ## Initialize Cache
-            all_entity_logits = []
-            ## Iterate Through Layers and Compute Emissions
-            for et, entity_head in enumerate(self.entity_heads):                    
-                ## Pass Through Classification Head
-                entity_logits = entity_head(ent_in)
-                ## Cache Logits and Tags
-                all_entity_logits.append(entity_logits)
-            ## Reconstruct Output Format (Apply Appropriate Padding)
-            all_entity_logits = torch.stack(all_entity_logits)
+            ## Apply Heads
+            all_entity_logits = torch.stack(self.entity_heads(ent_in))
         ## Return
         return all_entity_logits
 
@@ -409,6 +444,9 @@ class NERTaggerModel(torch.nn.Module):
         """
         
         """
+        ## Check
+        if hasattr(self, "_run_attributes") and not self._run_attributes:
+            return None
         ## Initialize Defaults
         all_attribute_logits = None
         ## Attribute Classification
@@ -442,6 +480,22 @@ class NERTaggerModel(torch.nn.Module):
                 all_attribute_logits.append(at_logits)
         ## Return
         return all_attribute_logits
+    
+    def set_encoder_switch(self,
+                           entity=None,
+                           attributes=None):
+        """
+
+        """
+        if entity is None and attributes is None:
+            raise ValueError("Must specify a value of True or False")
+        if entity is not None:
+            assert isinstance(entity, bool)
+            self._run_entity = entity
+        if attributes is not None:
+            assert isinstance(attributes, bool)
+            self._run_attributes = attributes
+        return self
     
     def forward(self,
                 inputs):

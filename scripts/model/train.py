@@ -25,7 +25,6 @@ from tqdm import tqdm
 
 ## Internal
 from cce.util import labels as label_utils
-from cce.model import eval
 from cce.model.datasets import EntityAttributeDataset
 from cce.model.architectures import NERTaggerModel
 from cce.model.train_utils import train, train_baseline, get_device, initialize_class_weights, sample_splits
@@ -58,6 +57,7 @@ def parse_command_line():
     _ = parser.add_argument("--include_attribute", action="store_true", default=False, help="Whether to model attributes.")
     _ = parser.add_argument("--entity_types_exclude", type=str, default=None, nargs="*", help="Prefixes for entities to exclude from dataset.")
     _ = parser.add_argument("--cache_label_encoders", action="store_true", default=False, help="If included, store the dataset label encoders.")
+    _ = parser.add_argument("--cache_splits", action="store_true", default=False)
     _ = parser.add_argument("--limit_spans_per_document", type=int, default=None, help="If included, restrict to maximimally this many spans per attribute per document.")
     _ = parser.add_argument("--limit_documents_per_group", type=int, default=None, help="If included, restrict to maximally this many documents per group.")
     _ = parser.add_argument("--limit_spans_per_group", type=int, default=None, help="If include, restrict to maximally this many spans per group.")
@@ -565,6 +565,12 @@ def create_datasets(args):
                                random_state=args.random_state)
     else:
         raise NotImplementedError(f"Split strategy not recognized: '{args.eval_strategy}'")    
+    ## Cache Splits
+    if args.cache_splits:
+        for fold, fold_splits in splits.items():
+            if args.eval_cv_fold is None or fold in args.eval_cv_fold:
+                with open(f"{args.output_dir}/splits.fold-{fold}.json","w") as the_file:
+                    json.dump({x:list(y) for x, y in fold_splits.items()}, the_file, indent=1) 
     ## Isolate Subset (If Desired)
     if args.eval_cv_fold is not None:
         splits = {x:splits[x] for x in args.eval_cv_fold}
@@ -756,11 +762,11 @@ def run_fold_train(args,
     ## NOTE: ADDED END
         print("[Gathering Baseline Performance Metrics]")
         baseline_training_logs, _ = train_baseline(dataset=dataset,
-                                                eval_train=args.eval_train,
-                                                eval_test=args.eval_test,
-                                                weighting_entity=args.weighting_entity,
-                                                weighting_attribute=args.weighting_attribute,
-                                                use_char=args.baseline_use_char)
+                                                   eval_train=args.eval_train,
+                                                   eval_test=args.eval_test,
+                                                   weighting_entity=args.weighting_entity,
+                                                   weighting_attribute=args.weighting_attribute,
+                                                   use_char=args.baseline_use_char)
         print("[Caching Baseline Training Logs]")
         for mode, mode_logs in baseline_training_logs.items():
             _ = torch.save(mode_logs, f"{fold_output_dir}/baseline.{mode}.train.log.pt")
