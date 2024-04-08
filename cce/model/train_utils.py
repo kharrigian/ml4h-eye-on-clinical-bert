@@ -322,6 +322,12 @@ def train(dataset,
     seed = np.random.RandomState(random_state)
     ## Initialize Checkpoint Directory
     if checkpoint_dir is not None:
+        ## Remove Existing
+        existing_checkpoints = glob(f"{checkpoint_dir}/checkpoint-*")
+        if len(existing_checkpoints) > 0:
+            print(">> WARNING - Removing {:,d} Existing Checkpoints".format(len(existing_checkpoints)))
+            for ec in existing_checkpoints:
+                _ = os.system(f"rm -rf {ec}")
         if not os.path.exists(checkpoint_dir):
             _ = os.makedirs(checkpoint_dir)
     ## Training Limits
@@ -561,39 +567,6 @@ def train(dataset,
                         else:
                             best_dev_macro_f1_steps += 1
                             best_checkpoint_f1_new = False
-
-
-                        # overall_dev_loss = 0
-                        # overall_dev_macro_f1 = [0, 0]
-                        # if split_performance["valid"]["entity"]:
-                        #     overall_dev_loss += split_performance["entity"]["loss"]
-                        #     overall_dev_macro_f1[0] += 1
-                        #     overall_dev_macro_f1[1] += split_performance["entity"]["scores_entity"]["strict"]["f1-score"]
-                        # if split_performance["valid"]["attributes"]:
-                        #     for task, task_loss in split_performance["attributes"]["loss"].items():
-                        #         overall_dev_loss += task_loss
-                        #     for task, task_scores in split_performance["attributes"]["scores"].items():
-                        #         task_macro_f1 = task_scores["macro avg"]["f1-score"]
-                        #         if not pd.isnull(task_macro_f1):
-                        #             overall_dev_macro_f1[0] += 1
-                        #             overall_dev_macro_f1[1] += task_macro_f1
-                        # overall_dev_macro_f1 = overall_dev_macro_f1[1] / overall_dev_macro_f1[0] if overall_dev_macro_f1[0] > 0 else 0
-                        # ## Loss Comparison
-                        # if best_dev_loss is None or overall_dev_loss < best_dev_loss * (1 - early_stopping_tol):
-                        #     best_dev_loss = overall_dev_loss
-                        #     best_dev_loss_steps = 0
-                        #     best_checkpoint_loss_new = True
-                        # else:
-                        #     best_dev_loss_steps += 1
-                        #     best_checkpoint_loss_new = False                  
-                        # ## Macro F1 Comparison
-                        # if best_dev_macro_f1 is None or overall_dev_macro_f1 > best_dev_macro_f1 * (1 + early_stopping_tol):
-                        #     best_dev_macro_f1 = overall_dev_macro_f1
-                        #     best_dev_macro_f1_steps = 0
-                        #     best_checkpoint_f1_new = True
-                        # else:
-                        #     best_dev_macro_f1_steps += 1
-                        #     best_checkpoint_f1_new = False
                         ## Early Stopping Check
                         if (early_stopping_warmup is None or n_steps >= early_stopping_warmup):
                             if best_dev_loss_steps >= early_stopping_patience and early_stopping_criteria == "loss":
@@ -611,6 +584,8 @@ def train(dataset,
                         ## Update Best Checkpoint
                         best_checkpoint_dir = f"{checkpoint_dir}/checkpoint-{n_steps}/"
                         print(f">> Saving new checkpoint: '{best_checkpoint_dir}'")
+                        if os.path.exists(best_checkpoint_dir):
+                            _ = os.system(f"rm -rf {best_checkpoint_dir}")
                         _ = os.makedirs(best_checkpoint_dir)
                         if save_models:
                             _ = torch.save(model.state_dict(), f"{best_checkpoint_dir}/model.pt")
