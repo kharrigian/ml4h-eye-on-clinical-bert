@@ -51,6 +51,8 @@ def parse_command_line():
     _ = parser.add_argument("--sequence_overlap_model", type=int, default=None, help="If desired, will include this much left-hand overlap when splitting long sequences into encoder inputs..")
     _ = parser.add_argument("--sequence_overlap_type_model", type=str, default="mean", choices={"first","last","mean"}, help="How to combine overlap within the encoder inputs.")
     _ = parser.add_argument("--sequence_split_type_input", type=str, default="centered", choices={"continuous","centered"}, help="How to split sequences relative to spans.")
+    _ = parser.add_argument("--sequence_split_buffer_input", type=int, default=None, help="If desired, number of tokens buffering known entity spans.")
+    _ = parser.add_argument("--sequence_split_whole_word_input", action="store_true", default=False, help="If desired, do not allow sequence splitting on wordpieces.")
     _ = parser.add_argument("--entity_key",type=str,default="label",help="Which label should be used as the primary entity type identifer.")
     _ = parser.add_argument("--attribute_keys",type=str,nargs="*",default="default",help="Attribute token classification tasks.")
     _ = parser.add_argument("--include_entity", action="store_true", default=False, help="Whether to model entities (NER)")
@@ -442,7 +444,9 @@ def create_datasets(args):
     tagging_tokenizer = AttributeTaggingTokenizer(tokenizer.tokenize,
                                                   max_sequence_length=args.max_sequence_length_input if args.split_input else None,
                                                   sequence_overlap=args.sequence_overlap_input if args.split_input else None,
-                                                  split_type=args.sequence_split_type_input)
+                                                  split_type=args.sequence_split_type_input,
+                                                  split_buffer=args.sequence_split_buffer_input,
+                                                  split_whole_word=args.sequence_split_whole_word_input)
     ## Preprocessing
     n_split = 0
     preprocessed_data = {"tags":[], "tokens":[], "document_id":[], "split":[], "text":[]}
@@ -454,7 +458,7 @@ def create_datasets(args):
                                                       sep_token=tokenizer.sep_token)
         n_split += int(len(tagged_sequences) > 1)
         ## Caching + Token Conversion
-        for sequence in tagged_sequences:                
+        for sequence in tagged_sequences:
             ## Token Conversion
             sequence_token_ids = tokenizer.convert_tokens_to_ids([i[0] for i in sequence])
             ## Caching
