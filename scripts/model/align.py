@@ -112,6 +112,22 @@ def main():
         alignment_data = sorted(alignment_data, key=lambda d: reference_document_order[d["document_id"]])
         ## Verify
         assert [i["document_id"] for i in alignment_data] == [i["document_id"] for i in reference_data]
+    ## Insert Metadata
+    if reference_data is not None and alignment_data is not None:
+        print("[Aligning Metadata]")
+        r2meta = {x["document_id"]:x["metadata"] for x in reference_data}
+        for a in alignment_data:
+            a["metadata"] = r2meta[a["document_id"]]
+    ## Insert Extra Keys
+    if alignment_data is not None:
+        print("[Aligning Keys]")
+        for a in alignment_data:
+            for l in a["labels"]:
+                for field in ["severity_type","laterality","status"]:
+                    if field not in l:
+                        l[field] = "N/A"
+                if l["label"] == "Z0 - General":
+                    l["label"] = "Z0 - Personalizing Language"
     ## Cache
     if reference_data is not None:
         print("[Caching Reference Data]")
