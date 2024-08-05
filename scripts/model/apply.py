@@ -1,10 +1,7 @@
 
 """
-Note: This has been setup currently for the separate entity approach. No
-guarantees that this will work with other task setups. 
-
-## TODO: Allow user to merge spans of the same type which are near one another
-(e.g., immediately next to each other or a couple token separation)
+Note: This has been setup for a specific use-case. There's no guarantee it will work outside
+the existing training setup.
 """
 
 #######################
@@ -393,7 +390,6 @@ def merge_nearby_spans(datum,
             span = deepcopy(span)
             n_tokens = len(datum["text"][spans_regrouped[-1]["end"]:span["start"]].split())
             if n_tokens <= max_dist:
-                print(n_tokens)
                 spans_regrouped[-1]["end"] = max(spans_regrouped[-1]["end"], span["end"])
             else:
                 spans_regrouped.append(span)
@@ -750,6 +746,8 @@ def main():
         _ = os.system(f"rm -rf {args.output_dir}")
     if not os.path.exists(args.output_dir):
         _ = os.makedirs(args.output_dir)
+    ## Device
+    device = get_device(args.gpu_id)
     ## Load Model Parameters
     print("[Loading Model Training Parameters]")
     with open(f"{args.model_dir}/train.cfg.json","r") as the_file:
@@ -780,7 +778,7 @@ def main():
                              train_config=train_config,
                              vocab2ind=tokenizer.get_vocab(),
                              entity_encoder=entity_encoder,
-                             attribute_encoders=attribute_encoders)
+                             attribute_encoders=attribute_encoders).to(device)
     ## Entity Dataset
     print("[Initializing Entity Discovery Dataset]")
     entity_dataset, preprocessed_data = create_dataset(tokenizer=tokenizer,
