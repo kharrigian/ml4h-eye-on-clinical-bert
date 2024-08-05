@@ -153,6 +153,12 @@ CONCEPT_ATTRIBUTE_MAP = {
             "Product"
         ]
     },
+    "S1 - Disbelief":{},
+    "S2 - Difficult":{},
+    "S3 - Positive Compliance":{},
+    "S4 - Negative Compliance":{},
+    "S5 - Positive Other":{},
+    "S6 - Negative Other":{},
     "Z0 - Personalizing Language":{
         "Severity/Type":[
             "Z1 - Family",
@@ -187,6 +193,12 @@ CONCEPT_BINARY_STATUS = set([
     "G3 - Heart Attack",
     "G4 - Stroke",
     "X1 - Emerging Entity",
+    "S1 - Disbelief",
+    "S2 - Difficult",
+    "S3 - Positive Compliance",
+    "S4 - Negative Compliance",
+    "S5 - Positive Other",
+    "S6 - Negative Other",
     "Z1 - Family",
     "Z2 - Career",
     "Z3 - Interests",
@@ -213,29 +225,37 @@ CLASSIFIER_TASK_MAP = {
     #     },
     #     "concepts":["A1","A2","A3","A4","B1","C1","C2","C3","D1","D2","D3","D4","E1","E2","F1","G1","G2","G3","G4","X1"]
     # },
+    # "named_entity_recognition":{
+    #     "field":"valid",
+    #     "classes":{
+    #         False:[False],
+    #         True:[True]
+    #     },
+    #     "concepts":["Z0","Z1","Z2","Z3","Z4","Z5","Z6","Z7","Z8","Z9","Z10"]
+    # },
+    # "personalizing_language_type":{
+    #     "field":"severity_type",
+    #     "classes":{
+    #         "Z1 - Family":["Z1 - Family"],
+    #         "Z2 - Career":["Z2 - Career"],
+    #         "Z3 - Interests":["Z3 - Interests"],
+    #         "Z4 - Residence":["Z4 - Residence"],
+    #         "Z5 - Support Network":["Z5 - Support Network"],
+    #         "Z6 - Pets":["Z6 - Pets"],
+    #         "Z7 - Education":["Z7 - Education"],
+    #         "Z8 - Other":["Z8 - Other"],
+    #         "Z9 - Travel":["Z9 - Travel"],
+    #         "Z10 - Outlook":["Z10 - Outlook"]
+    #     },
+    #     "concepts":["Z0"]
+    # },
     "named_entity_recognition":{
         "field":"valid",
         "classes":{
             False:[False],
-            True:[True]
+            True:[True],
         },
-        "concepts":["Z0","Z1","Z2","Z3","Z4","Z5","Z6","Z7","Z8","Z9","Z10"]
-    },
-    "personalizing_language_type":{
-        "field":"severity_type",
-        "classes":{
-            "Z1 - Family":["Z1 - Family"],
-            "Z2 - Career":["Z2 - Career"],
-            "Z3 - Interests":["Z3 - Interests"],
-            "Z4 - Residence":["Z4 - Residence"],
-            "Z5 - Support Network":["Z5 - Support Network"],
-            "Z6 - Pets":["Z6 - Pets"],
-            "Z7 - Education":["Z7 - Education"],
-            "Z8 - Other":["Z8 - Other"],
-            "Z9 - Travel":["Z9 - Travel"],
-            "Z10 - Outlook":["Z10 - Outlook"]
-        },
-        "concepts":["Z0"]
+        "concepts":["S1","S2","S3","S4","S5","S6"],
     },
     "laterality":{
         "field":"laterality",
