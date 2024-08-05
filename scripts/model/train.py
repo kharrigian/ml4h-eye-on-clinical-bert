@@ -98,6 +98,7 @@ def parse_command_line():
     _ = parser.add_argument("--weighting_attribute_gamma", type=float, default=1)
     _ = parser.add_argument("--use_crf", action="store_true", default=False,help="If included, will stack a CRF on-top of linear entity heads")
     _ = parser.add_argument("--use_crf_informed_prior", action="store_true", default=False, help="If included, initialize transition probabilities using training data counts.")
+    _ = parser.add_argument("--use_wordpiece_indicator", action="store_true", default=False, help="If included, add a binary indicator of whether a token is wordpiece (not the start of a word)")
     _ = parser.add_argument("--use_lstm", action="store_true", default=False, help="If included, will stack an LSTM on top-of encoding.")
     _ = parser.add_argument("--use_entity_token_bias", action="store_true", default=False, help="Whether to bias entity models with knowledge of regex token matches.")
     _ = parser.add_argument("--entity_token_bias_type", type=str, choices={"uniform","positional"}, default="uniform", help="Uniform bias just indicates that a match is present. Positional indicates whether it's the first token in the matched span.")
@@ -643,6 +644,7 @@ def initialize_model(args,
                            use_entity_token_bias=args.use_entity_token_bias,
                            entity_token_bias_type=args.entity_token_bias_type,
                            use_attribute_concept_bias=args.use_attribute_concept_bias,
+                           use_wordpiece_indicator=args.use_wordpiece_indicator,
                            max_sequence_length=args.max_sequence_length_model,
                            sequence_overlap=args.sequence_overlap_model,
                            sequence_overlap_type=args.sequence_overlap_type_model,

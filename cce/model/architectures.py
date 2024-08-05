@@ -110,6 +110,7 @@ class NERTaggerModel(torch.nn.Module):
                  use_lstm=False,
                  use_entity_token_bias=False,
                  use_attribute_concept_bias=False,
+                 use_wordpiece_indicator=False,
                  max_sequence_length=MAX_BERT_LENGTH,
                  sequence_overlap=None,
                  sequence_overlap_type="mean",
@@ -151,6 +152,7 @@ class NERTaggerModel(torch.nn.Module):
         self._use_lstm = use_lstm
         self._use_entity_token_bias = use_entity_token_bias
         self._use_attribute_concept_bias = use_attribute_concept_bias
+        self._use_wordpiece_indicator = use_wordpiece_indicator
         self._dropout = dropout
         self._max_sequence_length = max_sequence_length
         self._sequence_overlap = sequence_overlap
@@ -167,9 +169,12 @@ class NERTaggerModel(torch.nn.Module):
         self.encoder = AutoModel.from_pretrained(token_encoder,
                                                  max_position_embeddings=self._max_sequence_length,
                                                  ignore_mismatched_sizes=True)
-        ## NOTE: MODIFIED START
         self._token_encoder_dim = int(list(self.encoder.parameters())[-1].shape[0])
-        ## NOTE: MODIFIED END
+        ## Wordpiece Indicator
+        self._wordpiece_indicator = None
+        if self._use_wordpiece_indicator:
+            self._wordpiece_indicator = {y:int(x.startswith("##")) for x, y in token_vocab.items()}
+            self._wordpiece_indicator = torch.Tensor([self._wordpiece_indicator[i] for i in sorted(self._wordpiece_indicator.keys())])
         ## Freeze Encoder if Desired
         if self._token_encoder_frozen:
             _ = self._freeze_encoder()
@@ -192,6 +197,8 @@ class NERTaggerModel(torch.nn.Module):
             ent_encoding_dim = self._lstm_hidden_size * (1 + self._lstm_bidirectional) if self._use_lstm else self._token_encoder_dim
             if self._use_entity_token_bias:
                 ent_encoding_dim += len(self._encoder_entity.get_tasks()) * (1 + int(self._entity_token_bias_type == "positional"))
+            if self._use_wordpiece_indicator:
+                ent_encoding_dim += 1
             for e, entity_type in enumerate(self._entities):
                 self.entity_heads.append(MLP(in_dim=ent_encoding_dim,
                                              out_dim=3,
@@ -429,6 +436,9 @@ class NERTaggerModel(torch.nn.Module):
             raise ValueError("Expected non-null entity_tokens in inputs with `entity_token_bias` = True")
         elif not self._use_entity_token_bias:
             ent_in = encoding
+        ## Wordpiece Indicator
+        if self._use_wordpiece_indicator:
+            ent_in = torch.cat([ent_in, self._wordpiece_indicator[inputs["input_ids"]].unsqueeze(2)], 2)
         ## Apply Dropout
         ent_in = self.dropout(ent_in)
         ## Apply If Relevant
